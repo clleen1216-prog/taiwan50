@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #10120e;
+  --color-raised: #171a14;
+  --color-surface: #1e2319;
+  --color-surface-2: #2a3122;
+  --color-fg: #f4f0e6;
+  --color-muted: #b3aa98;
+  --color-faint: #9c9484;
+  --color-line: #34392d;
+  --color-gold: #d4b072;
+  --color-gold-2: #f0d7a6;
+  --color-ink: #1a140c;
+  --color-up: #e25b4a;
+  --color-down: #3caf7d;
+  --font-sans: "Noto Sans TC", "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --shadow-ring: 0 0 0 1px rgba(244, 240, 230, 0.08);
+  --shadow-ring-strong: 0 0 0 1px rgba(212, 176, 114, 0.45);
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--color-bg);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    line-height: 1.5;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-gold);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: var(--color-gold);
+    color: var(--color-ink);
+  }
+}
+
+@layer components {
+  .num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
