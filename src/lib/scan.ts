@@ -106,7 +106,7 @@ let holderInflight: Promise<Map<string, HolderInfo>> | null = null;
 let cache: { at: number; data: ScanOk } | null = null;
 let inflight: Promise<ScanResult> | null = null;
 
-async function getJson<T>(url: string): Promise<T> {
+export async function getJson<T>(url: string): Promise<T> {
   const response = await fetch(url, {
     headers: { "User-Agent": UA, Accept: "application/json" },
     signal: AbortSignal.timeout(15000),
@@ -115,7 +115,7 @@ async function getJson<T>(url: string): Promise<T> {
   return (await response.json()) as T;
 }
 
-async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>) {
+export async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>) {
   const out: R[] = new Array(items.length);
   let cursor = 0;
   async function worker() {
@@ -136,12 +136,12 @@ function num(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function r2(value: number) {
+export function r2(value: number) {
   return Math.round(value * 100) / 100;
 }
 
-async function fetchBars(code: string): Promise<Bar[]> {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${code}.TW?range=1y&interval=1d&includePrePost=false`;
+export async function fetchBars(code: string, suffix = ".TW"): Promise<Bar[]> {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${code}${suffix}?range=1y&interval=1d&includePrePost=false`;
   const json = await getJson<{
     chart?: {
       result?: Array<{

@@ -51,6 +51,8 @@ export interface ScoreInput {
   ret20: number | null;
   benchRet20: number | null;
   holders: HolderInfo | null;
+  /** 相對強弱的比較基準名稱，預設 0050 */
+  benchName?: string;
 }
 
 export interface ScoreOutput {
@@ -245,10 +247,10 @@ export function scoreStock(input: ScoreInput): ScoreOutput {
     input.ret20 != null && input.benchRet20 != null ? input.ret20 - input.benchRet20 : null;
   if (rs20 != null && rs20 >= 3) {
     flagship += 6;
-    notes.push("近 20 日比 0050 強");
+    notes.push(`近 20 日比 ${input.benchName ?? "0050"} 強`);
   } else if (rs20 != null && rs20 <= -3) {
     flagship -= 4;
-    notes.push("近 20 日比 0050 弱");
+    notes.push(`近 20 日比 ${input.benchName ?? "0050"} 弱`);
   }
 
   if (settlementPenalty) {

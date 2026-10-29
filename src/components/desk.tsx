@@ -6,6 +6,7 @@ import { SECTORS } from "@/lib/universe";
 import { fmtLots, fmtPct, fmtPrice, taipeiClock, toneClass } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { StockPanel } from "@/components/stock-panel";
+import { MarketTabs } from "@/components/market-tabs";
 
 const WATCH_KEY = "flagship50.watch";
 
@@ -226,6 +227,7 @@ export function Desk({ initial }: { initial: ScanResult }) {
           </button>
         </div>
       </header>
+      <MarketTabs current="/" />
 
       {data.ok ? (
         <DeskBody
