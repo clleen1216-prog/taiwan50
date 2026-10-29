@@ -12,6 +12,20 @@ export type WireBar = [number, number, number, number, number, number, number, n
 
 export type ChipSide = "dual-buy" | "single-buy" | "split" | "dual-sell" | "neutral" | "unknown";
 
+export type HolderSide = "concentrating" | "distributing" | "neutral" | "unknown";
+
+/** 集保戶股權分散表：持股 1,000 張以上大戶，最近幾週的占比變化 */
+export interface HolderInfo {
+  /** 最新一週占比 (%) */
+  pct: number;
+  /** 最新一週相對前一週的變化 (百分點) */
+  change: number;
+  /** 連續增加(+)或連續減少(-)的週數 */
+  streak: number;
+  /** 資料週 YYYY-MM-DD */
+  date: string;
+}
+
 export type SopKind = "breakout" | "fake" | "coil" | "watch" | "trend" | "weak" | "flat";
 
 export interface CheckItem {
@@ -36,6 +50,7 @@ export interface ScoreInput {
   settlement: boolean;
   ret20: number | null;
   benchRet20: number | null;
+  holders: HolderInfo | null;
 }
 
 export interface ScoreOutput {
@@ -53,6 +68,8 @@ export interface ScoreOutput {
   chipLabel: string;
   bullStack: boolean;
   settlementPenalty: boolean;
+  holderSide: HolderSide;
+  holderLabel: string;
   rs20: number | null;
   notes: string[];
   checks: CheckItem[];
@@ -93,6 +110,13 @@ function chipOf(foreign: number | null, trust: number | null): { chip: ChipSide;
   return { chip: "neutral", label: "籌碼中立" };
 }
 
+function holderOf(info: HolderInfo | null): { side: HolderSide; label: string } {
+  if (!info) return { side: "unknown", label: "大戶資料未取得" };
+  if (info.streak >= 2) return { side: "concentrating", label: `千張大戶連 ${info.streak} 週增持` };
+  if (info.streak <= -2) return { side: "distributing", label: `千張大戶連 ${-info.streak} 週減持` };
+  return { side: "neutral", label: "千張大戶持平" };
+}
+
 export function scoreStock(input: ScoreInput): ScoreOutput {
   const { close, open, high, low, volume, ma5, ma10, ma20, ma60, volMa20 } = input;
   const maValues = [ma5, ma10, ma20, ma60];
@@ -107,6 +131,8 @@ export function scoreStock(input: ScoreInput): ScoreOutput {
   const bullStack = ma5 > ma10 && ma10 > ma20 && ma20 > ma60;
   const aboveMa20 = close > ma20;
   const { chip, label: chipLabel } = chipOf(input.foreign, input.trust);
+  const { side: holderSide, label: holderLabel } = holderOf(input.holders);
+  const holderBonus = inGate && holderSide === "concentrating";
 
   let sop = 70;
   let kind: SopKind = "watch";
@@ -128,6 +154,8 @@ export function scoreStock(input: ScoreInput): ScoreOutput {
   if (chip === "dual-buy") sop += 15;
   else if (chip === "single-buy" || chip === "split") sop += 5;
   else if (chip === "dual-sell") sop -= 15;
+
+  if (holderBonus) sop += 15;
 
   const settlementPenalty = inGate && input.settlement && kind === "breakout";
   if (settlementPenalty) sop -= 10;
@@ -204,6 +232,15 @@ export function scoreStock(input: ScoreInput): ScoreOutput {
     notes.push("外資與投信同步賣超");
   }
 
+  if (holderBonus) {
+    flagship += 15;
+    notes.push(`${holderLabel}，糾結同時籌碼集中（+15）`);
+  } else if (holderSide === "concentrating") {
+    notes.push(`${holderLabel}，但均線還沒糾結，不加分`);
+  } else if (holderSide === "distributing") {
+    notes.push(`${holderLabel}，留意籌碼鬆動`);
+  }
+
   const rs20 =
     input.ret20 != null && input.benchRet20 != null ? input.ret20 - input.benchRet20 : null;
   if (rs20 != null && rs20 >= 3) {
@@ -244,6 +281,13 @@ export function scoreStock(input: ScoreInput): ScoreOutput {
       detail: input.trust == null ? "無資料" : input.trust > 0 ? "買超" : "未買超",
     },
     {
+      label: "千張大戶集中",
+      pass: holderSide === "concentrating",
+      detail: input.holders
+        ? `${input.holders.pct.toFixed(2)}% (${input.holders.change >= 0 ? "+" : ""}${input.holders.change.toFixed(2)})`
+        : "無資料",
+    },
+    {
       label: "結算日不追突破",
       pass: !settlementPenalty,
       detail: !input.settlement ? "非週三" : settlementPenalty ? "已扣點" : "週三，這檔不是追價",
@@ -265,8 +309,10 @@ export function scoreStock(input: ScoreInput): ScoreOutput {
     chipLabel,
     bullStack,
     settlementPenalty,
+    holderSide,
+    holderLabel,
     rs20: rs20 == null ? null : roundTo(rs20, 2),
-    notes: notes.slice(0, 6),
+    notes: notes.slice(0, 7),
     checks,
   };
 }

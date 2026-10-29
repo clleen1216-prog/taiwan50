@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { BENCHMARK, UNIVERSE } from "@/lib/universe";
 import { taipeiDay, taipeiWeekday } from "@/lib/format";
+import { bigHolderSeries, toHolderInfo } from "@/lib/holders";
 import {
   rollingMean,
   scoreStock,
@@ -8,6 +9,8 @@ import {
   type Bar,
   type CheckItem,
   type ChipSide,
+  type HolderInfo,
+  type HolderSide,
   type SopKind,
   type WireBar,
 } from "@/lib/score";
@@ -15,6 +18,9 @@ import {
 const UA = "Mozilla/5.0 (compatible; Flagship50/1.0; +https://grok.com)";
 const TTL_MS = 5 * 60 * 1000;
 const CHART_BARS = 80;
+const HOLDER_TTL_MS = 6 * 60 * 60 * 1000;
+const HOLDER_RETRY_MS = 10 * 60 * 1000;
+const HOLDER_WAIT_MS = 12000;
 
 export interface StockRow {
   code: string;
@@ -55,6 +61,11 @@ export interface StockRow {
   rs20: number | null;
   bullStack: boolean;
   settlementPenalty: boolean;
+  holderSide: HolderSide;
+  holderLabel: string;
+  bigPct: number | null;
+  bigChange: number | null;
+  bigStreak: number | null;
   notes: string[];
   checks: CheckItem[];
   bars: WireBar[];
@@ -65,6 +76,7 @@ export interface ScanOk {
   scannedAt: number;
   sessionDate: string;
   chipDate: string | null;
+  holderDate: string | null;
   calendarDate: string;
   settlement: boolean;
   weekdayLabel: string;
@@ -89,6 +101,8 @@ interface FundaRow {
   pb: number | null;
 }
 
+let holderCache: { at: number; ok: boolean; map: Map<string, HolderInfo> } | null = null;
+let holderInflight: Promise<Map<string, HolderInfo>> | null = null;
 let cache: { at: number; data: ScanOk } | null = null;
 let inflight: Promise<ScanResult> | null = null;
 
@@ -235,11 +249,66 @@ async function fetchFundamentals(): Promise<Map<string, FundaRow>> {
   return map;
 }
 
+/**
+ * 集保戶股權分散表（每週五結算、週六公布）。FinMind 的 TaiwanStockHoldingSharesPer
+ * 每週一筆、每個持股級距一列；持股 1,000 張 = 1,000,000 股，所以取級距下限
+ * ≥ 1,000,001 股的列加總，就是「千張以上大戶」占集保庫存比例。
+ * 可選環境變數 FINMIND_TOKEN 提高 FinMind 的額度；沒有也能跑。
+ */
+async function fetchHolders(): Promise<Map<string, HolderInfo>> {
+  const start = taipeiDay(Date.now() - 60 * 24 * 3600 * 1000);
+  const token = process.env.FINMIND_TOKEN?.trim();
+  const out = new Map<string, HolderInfo>();
+  await mapPool(UNIVERSE, 6, async (stock) => {
+    try {
+      const url =
+        `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockHoldingSharesPer` +
+        `&data_id=${stock.code}&start_date=${start}` +
+        (token ? `&token=${token}` : "");
+      const json = await getJson<{ status?: number; data?: Array<Record<string, string | number>> }>(url);
+      if (json.status !== 200 || !Array.isArray(json.data)) return;
+      const info = toHolderInfo(bigHolderSeries(json.data));
+      if (info) out.set(stock.code, info);
+    } catch {
+      // 單檔失敗就當沒資料，不影響其他檔
+    }
+  });
+  return out;
+}
+
+async function getHolders(): Promise<Map<string, HolderInfo>> {
+  const now = Date.now();
+  if (holderCache) {
+    const age = now - holderCache.at;
+    if (age < (holderCache.ok ? HOLDER_TTL_MS : HOLDER_RETRY_MS)) return holderCache.map;
+  }
+  if (!holderInflight) {
+    holderInflight = fetchHolders()
+      .then((map) => {
+        holderCache = { at: Date.now(), ok: map.size > 0, map };
+        return map;
+      })
+      .catch(() => new Map<string, HolderInfo>())
+      .finally(() => {
+        holderInflight = null;
+      });
+  }
+  return holderInflight;
+}
+
+async function holdersWithin(ms: number): Promise<Map<string, HolderInfo>> {
+  const empty = new Map<string, HolderInfo>();
+  const wait = new Promise<Map<string, HolderInfo>>((resolve) => setTimeout(() => resolve(empty), ms));
+  // 超時就先用空的，抓取會在背景繼續並寫入快取，下一輪掃描就用得到
+  return Promise.race([getHolders(), wait]);
+}
+
 function toRow(
   meta: { code: string; name: string; sector: string },
   bars: Bar[],
   chip: ChipRow | undefined,
   funda: FundaRow | undefined,
+  holders: HolderInfo | undefined,
   settlement: boolean,
   benchRet20: number | null,
 ): StockRow | null {
@@ -289,6 +358,7 @@ function toRow(
     settlement,
     ret20: ret20raw,
     benchRet20,
+    holders: holders ?? null,
   });
 
   const wire: WireBar[] = [];
@@ -340,6 +410,11 @@ function toRow(
     rs20: scored.rs20,
     bullStack: scored.bullStack,
     settlementPenalty: scored.settlementPenalty,
+    holderSide: scored.holderSide,
+    holderLabel: scored.holderLabel,
+    bigPct: holders ? holders.pct : null,
+    bigChange: holders ? holders.change : null,
+    bigStreak: holders ? holders.streak : null,
     notes: scored.notes,
     checks: scored.checks,
     bars: wire,
@@ -350,9 +425,10 @@ async function buildScan(): Promise<ScanResult> {
   const scannedAt = Date.now();
   const weekday = taipeiWeekday(scannedAt);
   try {
-    const [chipResult, fundaResult, benchBars, charts] = await Promise.all([
+    const [chipResult, fundaResult, holderMap, benchBars, charts] = await Promise.all([
       fetchChips().catch(() => ({ date: null, map: new Map<string, ChipRow>() })),
       fetchFundamentals().catch(() => new Map<string, FundaRow>()),
+      holdersWithin(HOLDER_WAIT_MS),
       fetchBars(BENCHMARK.code).catch(() => [] as Bar[]),
       mapPool(UNIVERSE, 8, async (stock) => {
         try {
@@ -390,6 +466,7 @@ async function buildScan(): Promise<ScanResult> {
         item.bars,
         chipResult.map.get(item.stock.code),
         fundaResult.get(item.stock.code),
+        holderMap.get(item.stock.code),
         weekday.isWednesday,
         benchRet20,
       );
@@ -413,6 +490,10 @@ async function buildScan(): Promise<ScanResult> {
       scannedAt,
       sessionDate: sessionMs ? taipeiDay(sessionMs) : taipeiDay(scannedAt),
       chipDate: chipResult.date,
+      holderDate: [...holderMap.values()].reduce<string | null>(
+        (latest, info) => (latest == null || info.date > latest ? info.date : latest),
+        null,
+      ),
       calendarDate: taipeiDay(scannedAt),
       settlement: weekday.isWednesday,
       weekdayLabel: weekday.label,

@@ -9,7 +9,7 @@ import { StockPanel } from "@/components/stock-panel";
 
 const WATCH_KEY = "flagship50.watch";
 
-type Lens = "gate" | "all" | "breakout" | "fake" | "coil" | "dual" | "watch";
+type Lens = "gate" | "all" | "breakout" | "fake" | "coil" | "dual" | "big" | "watch";
 type SortKey = "flagship" | "sop" | "change" | "spread" | "vol" | "foreign";
 
 const LENSES: { id: Lens; label: string }[] = [
@@ -19,6 +19,7 @@ const LENSES: { id: Lens; label: string }[] = [
   { id: "fake", label: "假突破" },
   { id: "coil", label: "量縮" },
   { id: "dual", label: "雙買" },
+  { id: "big", label: "大戶" },
   { id: "watch", label: "關注" },
 ];
 
@@ -41,7 +42,7 @@ function shortStatus(row: StockRow) {
 }
 
 function downloadCsv(rows: StockRow[]) {
-  const header = ["代號", "名稱", "產業", "現價", "漲跌幅", "糾結度", "量比", "外資張", "投信張", "SOP", "旗艦", "狀態", "籌碼"];
+  const header = ["代號", "名稱", "產業", "現價", "漲跌幅", "糾結度", "量比", "外資張", "投信張", "SOP", "旗艦", "狀態", "籌碼", "千張大戶占比%", "週變化pp", "連續週數"];
   const lines = rows.map((row) =>
     [
       row.code,
@@ -57,6 +58,9 @@ function downloadCsv(rows: StockRow[]) {
       row.flagshipScore,
       row.sopLabel,
       row.chipLabel,
+      row.bigPct ?? "",
+      row.bigChange ?? "",
+      row.bigStreak ?? "",
     ].join(","),
   );
   const blob = new Blob([`\uFEFF${header.join(",")}\n${lines.join("\n")}`], {
@@ -116,6 +120,7 @@ export function Desk({ initial }: { initial: ScanResult }) {
       breakout: rows.filter((row) => row.sopKind === "breakout").length,
       fake: rows.filter((row) => row.sopKind === "fake").length,
       dual: rows.filter((row) => row.chip === "dual-buy").length,
+      big: rows.filter((row) => row.holderSide === "concentrating").length,
     };
   }, [rows]);
 
@@ -136,6 +141,7 @@ export function Desk({ initial }: { initial: ScanResult }) {
       if (lens === "fake") return row.sopKind === "fake";
       if (lens === "coil") return row.sopKind === "coil" && row.inGate;
       if (lens === "dual") return row.chip === "dual-buy";
+      if (lens === "big") return row.holderSide === "concentrating";
       if (lens === "watch") return watchSet.has(row.code);
       return true;
     });
@@ -300,7 +306,7 @@ function DeskBody({
   panelOpen,
 }: {
   data: Extract<ScanResult, { ok: true }>;
-  counts: { gate: number; breakout: number; fake: number; dual: number };
+  counts: { gate: number; breakout: number; fake: number; dual: number; big: number };
   calls: { title: string; hint: string; items: StockRow[] };
   visible: StockRow[];
   lens: Lens;
@@ -351,6 +357,10 @@ function DeskBody({
         <Metric label="假突破警戒" value={String(counts.fake)} note="爆量上影或收黑" />
         <Metric label="雙法人買超" value={String(counts.dual)} note="外資與投信同買" />
       </section>
+      <p className="mt-3 text-xs text-muted">
+        千張大戶連續增持 <span className="num text-gold">{counts.big}</span> 檔
+        {data.holderDate ? `（集保週報 ${data.holderDate}）` : "（集保資料這輪沒取到，大戶加分暫停）"}
+      </p>
 
       <section className="mt-4">
         <div className="mb-2 flex items-baseline justify-between gap-3">
@@ -494,6 +504,7 @@ function DeskBody({
                   <SortHead label="量比" active={sortKey === "vol"} onClick={() => onSort("vol")} className="hidden lg:table-cell" />
                   <SortHead label="外資" active={sortKey === "foreign"} onClick={() => onSort("foreign")} className="hidden lg:table-cell" />
                   <th className="hidden py-2 font-medium lg:table-cell">投信</th>
+                  <th className="hidden py-2 font-medium xl:table-cell">千張大戶</th>
                   <SortHead label="SOP" active={sortKey === "sop"} onClick={() => onSort("sop")} />
                   <SortHead label="旗艦" active={sortKey === "flagship"} onClick={() => onSort("flagship")} />
                   <th className="py-2 font-medium">狀態</th>
@@ -534,6 +545,19 @@ function DeskBody({
                     <td className={cn("num hidden py-2 lg:table-cell", row.trust == null ? "text-faint" : toneClass(row.trust))}>
                       {row.trust == null ? "—" : fmtLots(row.trust)}
                     </td>
+                    <td className="num hidden py-2 xl:table-cell">
+                      {row.bigPct == null ? (
+                        <span className="text-faint">—</span>
+                      ) : (
+                        <span title={row.holderLabel}>
+                          {row.bigPct.toFixed(2)}%
+                          <span className={cn("ml-1 text-xs", toneClass(row.bigChange ?? 0))}>
+                            {(row.bigChange ?? 0) > 0 ? "+" : ""}
+                            {(row.bigChange ?? 0).toFixed(2)}
+                          </span>
+                        </span>
+                      )}
+                    </td>
                     <td className="num py-2">{row.sopScore ?? "—"}</td>
                     <td className="num py-2 text-gold">{row.flagshipScore}</td>
                     <td className="py-2">
@@ -570,6 +594,9 @@ function DeskBody({
                   </p>
                   <p className="mt-2 text-xs text-muted">
                     糾結 {row.spreadPct.toFixed(2)}% · 量比 {row.volRatio.toFixed(2)} · {row.chipLabel}
+                    {row.holderSide === "concentrating" || row.holderSide === "distributing"
+                      ? ` · ${row.holderLabel}`
+                      : ""}
                     {row.sopScore != null ? ` · SOP ${row.sopScore}` : ""}
                   </p>
                   <span className={cn("mt-3 inline-flex h-6 items-center rounded-md px-2 text-xs", kindTone(row.sopKind))}>
@@ -641,19 +668,19 @@ function Methodology({ scanned }: { scanned: number }) {
           <div>
             <h3 className="font-medium text-fg">原 SOP，數字沒有改</h3>
             <p className="mt-2 text-pretty">
-              只在四條均線（5、10、20、60）高低價差小於收盤 5% 時給分，否則原腳本直接跳過。基礎 70。價差再小於 2.5% 加 10。量是 20 日均量 1.5 倍以上且收在月線上：實體乾淨加 20，上影超過整根 K 的 40% 或收黑扣 30。量比低於 0.8 加 5。外資與投信同買加 15，只有一邊買加 5，兩邊都賣扣 15。週三又是強勢發動再扣 10。這欄可以超過 100，跟舊腳本一樣不封頂。
+              只在四條均線（5、10、20、60）高低價差小於收盤 5% 時給分，否則原腳本直接跳過。基礎 70。價差再小於 2.5% 加 10。量是 20 日均量 1.5 倍以上且收在月線上：實體乾淨加 20，上影超過整根 K 的 40% 或收黑扣 30。量比低於 0.8 加 5。外資與投信同買加 15，只有一邊買加 5，兩邊都賣扣 15。週三又是強勢發動再扣 10。第二優先新增：已入閘又遇千張大戶連續兩週以上增持，加 15。這欄可以超過 100，跟舊腳本一樣不封頂。
             </p>
           </div>
           <div>
             <h3 className="font-medium text-fg">旗艦分數，讓沒入閘的也能排</h3>
             <p className="mt-2 text-pretty">
-              0 到 100。從 40 起跳：極緊糾結 +18、普通入閘 +12、開始收斂 +5；多頭排列 +8；站上月線 ±5、站上季線 +5 / 跌破 −6；扎實突破 +16、假突破 −18、糾結量縮 +6；雙買 +12、單買 +5、分歧 +2、雙賣 −12；20 日相對 0050 超過 3 個百分點 ±6 / −4；結算日追價 −8。
+              0 到 100。從 40 起跳：極緊糾結 +18、普通入閘 +12、開始收斂 +5；多頭排列 +8；站上月線 ±5、站上季線 +5 / 跌破 −6；扎實突破 +16、假突破 −18、糾結量縮 +6；雙買 +12、單買 +5、分歧 +2、雙賣 −12；20 日相對 0050 超過 3 個百分點 ±6 / −4；結算日追價 −8；入閘且千張大戶連續增持 +15。
             </p>
           </div>
           <div>
             <h3 className="font-medium text-fg">資料</h3>
             <p className="mt-2 text-pretty">
-              日線來自 Yahoo Finance，近一年，這輪掃到 {scanned} 檔。三大法人用證交所 T86，外資是外陸資買賣超加上外資自營商，不是買進股數。本益比、殖利率、股價淨值比用證交所公開估值。觀察名單沿用原程式的 49 檔，不是每天重建的官方成分股。快取約 5 分鐘。原排程是台北時間 10:00、11:00、12:00、15:00 複核。
+              日線來自 Yahoo Finance，近一年，這輪掃到 {scanned} 檔。千張大戶占比用集保戶股權分散表（經 FinMind，每週五結算、週六公布，持股 1,000 張以上各級距加總），連續兩週以上增加才算集中，快取 6 小時，取不到就不加分也不扣分。三大法人用證交所 T86，外資是外陸資買賣超加上外資自營商，不是買進股數。本益比、殖利率、股價淨值比用證交所公開估值。觀察名單沿用原程式的 49 檔，不是每天重建的官方成分股。快取約 5 分鐘。原排程是台北時間 10:00、11:00、12:00、15:00 複核。
             </p>
           </div>
           <div>
