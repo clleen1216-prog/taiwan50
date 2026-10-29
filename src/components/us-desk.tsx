@@ -166,6 +166,35 @@ export function UsDesk({ initial }: { initial: UsScanResult }) {
             <Metric label="內部人買進" value={counts.insider} note="近 30 天 ≥ $100K" />
           </section>
 
+          {data.etfs.length > 0 ? (
+            <section className="mt-4">
+              <div className="mb-2 flex items-baseline justify-between gap-3">
+                <h2 className="text-sm font-medium">產業資金輪動</h2>
+                <p className="text-xs text-faint">產業 ETF 相對 SPY · 只顯示不計分</p>
+              </div>
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {data.etfs.map((etf) => (
+                  <div key={etf.symbol} className="shrink-0 rounded-xl bg-surface px-3 py-2 shadow-ring">
+                    <p className="text-xs text-muted">
+                      {etf.name} <span className="num text-faint">{etf.symbol}</span>
+                    </p>
+                    <p className="num mt-1 text-sm">
+                      <span className={etf.rel20 == null ? "text-faint" : toneClass(etf.rel20)}>
+                        20日 {etf.rel20 == null ? "—" : fmtPct(etf.rel20)}
+                      </span>
+                      <span className={cn("ml-2", etf.rel5 == null ? "text-faint" : toneClass(etf.rel5))}>
+                        5日 {etf.rel5 == null ? "—" : fmtPct(etf.rel5)}
+                      </span>
+                    </p>
+                    <p className="num mt-1 text-xs text-faint">
+                      量能 5/20 日 ×{etf.volRatio == null ? "—" : etf.volRatio.toFixed(2)}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
           <div className="mt-5 flex flex-wrap gap-2">
             {LENSES.map((item) => (
               <button
@@ -246,7 +275,7 @@ export function UsDesk({ initial }: { initial: UsScanResult }) {
                 <div>
                   <h3 className="font-medium text-fg">資料與限制</h3>
                   <p className="mt-2 text-pretty">
-                    日線來自 Yahoo Finance。財報日來自 Yahoo quoteSummary，抓不到會明確標示「財報日未知」，不會當成安全。內部人用 SEC EDGAR 的 Form 4，只算交易代碼 P（公開市場買進）、官員或董事、近 30 天合計 ≥ $100K；賣出、股票授予、選擇權行權不算。ASML、TSM 是外國發行人，不申報 Form 4。流動性用 FRED 隔夜逆回購餘額的絕對變動。財報日與內部人快取 6 小時。
+                    日線來自 Yahoo Finance。財報日來自 Yahoo quoteSummary，抓不到會明確標示「財報日未知」，不會當成安全。內部人用 SEC EDGAR 的 Form 4，只算交易代碼 P（公開市場買進）、官員或董事、近 30 天合計 ≥ $100K；賣出、股票授予、選擇權行權不算。ASML、TSM 是外國發行人，不申報 Form 4。流動性用 FRED 隔夜逆回購餘額的絕對變動。財報日與內部人快取 6 小時。產業輪動用 SMH、XLK、IGV、QQQ 對 SPY 的 5 日與 20 日相對報酬，以及近 5 日對近 20 日的平均量比，只顯示、不計分。
                   </p>
                 </div>
                 <div>

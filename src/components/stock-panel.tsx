@@ -177,6 +177,41 @@ export function StockPanel({
           </section>
 
           <section>
+            <h3 className="text-sm font-medium">資金動向</h3>
+            <p className="mt-1 text-xs text-faint">只顯示，不影響分數</p>
+            <dl className="mt-2 grid grid-cols-2 gap-2 text-sm">
+              <Stat label="外資連續" value={streakText(row.flow?.foreignStreak)} tone={row.flow?.foreignStreak} />
+              <Stat label="投信連續" value={streakText(row.flow?.trustStreak)} tone={row.flow?.trustStreak} />
+              <Stat
+                label={`外資近 ${row.flow?.days ?? 5} 日`}
+                value={row.flow ? fmtLots(row.flow.foreign5d) : "—"}
+                tone={row.flow?.foreign5d}
+              />
+              <Stat
+                label={`投信近 ${row.flow?.days ?? 5} 日`}
+                value={row.flow ? fmtLots(row.flow.trust5d) : "—"}
+                tone={row.flow?.trust5d}
+              />
+              <Stat
+                label="融資餘額"
+                value={row.margin ? `${row.margin.marginBal.toLocaleString("zh-TW")}張` : "—"}
+              />
+              <Stat
+                label="融資單日增減"
+                value={row.margin ? `${row.margin.marginChange > 0 ? "+" : ""}${row.margin.marginChange.toLocaleString("zh-TW")}張` : "—"}
+              />
+              <Stat label="融資使用率" value={row.margin?.marginUse == null ? "—" : `${row.margin.marginUse}%`} />
+              <Stat label="券資比" value={row.margin?.shortRatio == null ? "—" : `${row.margin.shortRatio}%`} />
+              <Stat
+                label="類股資金"
+                value={row.sectorRatio == null ? "—" : `${row.sector} ×${row.sectorRatio.toFixed(2)}`}
+                tone={row.sectorRatio == null ? null : row.sectorRatio - 1}
+              />
+              <Stat label="融資判讀" value={row.margin?.label ?? "—"} />
+            </dl>
+          </section>
+
+          <section>
             <h3 className="text-sm font-medium">均線</h3>
             <dl className="mt-2 grid grid-cols-4 gap-2">
               {[
@@ -243,6 +278,11 @@ export function StockPanel({
       </aside>
     </>
   );
+}
+
+function streakText(value: number | undefined) {
+  if (!value) return "—";
+  return value > 0 ? `連買 ${value} 日` : `連賣 ${-value} 日`;
 }
 
 function Stat({ label, value, tone }: { label: string; value: string; tone?: number | null }) {

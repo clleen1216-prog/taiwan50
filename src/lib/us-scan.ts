@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
-import { US_BENCHMARK, US_UNIVERSE, type UsStock } from "@/lib/us-universe";
+import { US_BENCHMARK, US_SECTOR_ETFS, US_UNIVERSE, type UsStock } from "@/lib/us-universe";
+import { etfFlow, type EtfFlow } from "@/lib/flows";
 import { fetchBars, mapPool, r2 } from "@/lib/scan";
 import {
   rollingMean,
@@ -87,6 +88,7 @@ export interface UsScanOk {
   sessionDate: string;
   benchmark: { price: number; changePct: number; ret20: number | null } | null;
   liquidity: Liquidity;
+  etfs: EtfFlow[];
   earningsKnown: number;
   insiderKnown: number;
   rows: UsRow[];
@@ -459,9 +461,13 @@ let inflight: Promise<UsScanResult> | null = null;
 async function buildScan(): Promise<UsScanResult> {
   const scannedAt = Date.now();
   try {
-    const [liquidity, slow, benchBars, charts] = await Promise.all([
+    const [liquidity, slow, etfBars, benchBars, charts] = await Promise.all([
       fetchLiquidity().catch(() => liquidityFrom([])),
       slowWithin(SLOW_WAIT_MS),
+      mapPool([...US_SECTOR_ETFS], 4, async (etf) => ({
+        etf,
+        bars: await fetchBars(etf.symbol, "").catch(() => [] as Bar[]),
+      })),
       fetchBars(US_BENCHMARK.symbol, "").catch(() => [] as Bar[]),
       mapPool(US_UNIVERSE, 6, async (stock) => {
         try {
@@ -485,6 +491,11 @@ async function buildScan(): Promise<UsScanResult> {
           }
         : null;
 
+    const etfs = etfBars
+      .filter((item) => item.bars.length >= 21 && benchBars.length >= 21)
+      .map((item) => etfFlow(item.etf, item.bars, benchBars))
+      .sort((a, b) => (b.rel20 ?? -999) - (a.rel20 ?? -999));
+
     const rows: UsRow[] = [];
     const missing: string[] = [];
     let sessionMs = 0;
@@ -507,6 +518,7 @@ async function buildScan(): Promise<UsScanResult> {
       sessionDate: sessionMs ? sessionDay(sessionMs) : sessionDay(scannedAt),
       benchmark,
       liquidity,
+      etfs,
       earningsKnown: slow.earnings.size,
       insiderKnown: [...slow.insiders.values()].filter((r) => r.status === "ok").length,
       rows,

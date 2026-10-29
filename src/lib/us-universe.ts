@@ -22,3 +22,11 @@ export const US_UNIVERSE: UsStock[] = [
   { symbol: "AMZN", name: "亞馬遜", sector: "科技巨頭" },
   { symbol: "ORCL", name: "甲骨文", sector: "軟體雲端" },
 ];
+
+/** 美股產業資金輪動：用產業 ETF 對 SPY 的相對強弱與量能 */
+export const US_SECTOR_ETFS = [
+  { symbol: "SMH", name: "半導體" },
+  { symbol: "XLK", name: "科技" },
+  { symbol: "IGV", name: "軟體" },
+  { symbol: "QQQ", name: "那斯達克 100" },
+] as const;

@@ -3,6 +3,14 @@ import { BENCHMARK, UNIVERSE } from "@/lib/universe";
 import { taipeiDay, taipeiWeekday } from "@/lib/format";
 import { bigHolderSeries, toHolderInfo } from "@/lib/holders";
 import {
+  flowFrom,
+  marginFrom,
+  sectorRotation,
+  type FlowInfo,
+  type MarginInfo,
+  type SectorFlow,
+} from "@/lib/flows";
+import {
   rollingMean,
   scoreStock,
   trailingReturn,
@@ -61,6 +69,10 @@ export interface StockRow {
   rs20: number | null;
   bullStack: boolean;
   settlementPenalty: boolean;
+  /** 以下三組只顯示、不計分 */
+  flow: FlowInfo | null;
+  margin: MarginInfo | null;
+  sectorRatio: number | null;
   holderSide: HolderSide;
   holderLabel: string;
   bigPct: number | null;
@@ -77,6 +89,8 @@ export interface ScanOk {
   sessionDate: string;
   chipDate: string | null;
   holderDate: string | null;
+  flowDays: number;
+  sectors: SectorFlow[];
   calendarDate: string;
   settlement: boolean;
   weekdayLabel: string;
@@ -189,46 +203,140 @@ function shiftYmd(ymd: string, days: number) {
   return `${y}${m}${d}`;
 }
 
+interface T86Day {
+  date: string | null;
+  map: Map<string, ChipRow>;
+}
+
+async function fetchT86(ymd: string): Promise<T86Day | null> {
+  const json = await getJson<{
+    stat?: string;
+    date?: string;
+    fields?: string[];
+    data?: string[][];
+  }>(`https://www.twse.com.tw/rwd/zh/fund/T86?response=json&date=${ymd}&selectType=ALLBUT0999`);
+  if (json.stat !== "OK" || !json.fields || !json.data?.length) return null;
+  const fields = json.fields;
+  const at = (name: string) => fields.indexOf(name);
+  const iCode = at("證券代號");
+  const iForeign = at("外陸資買賣超股數(不含外資自營商)");
+  const iForeignDealer = at("外資自營商買賣超股數");
+  const iTrust = at("投信買賣超股數");
+  const iDealer = at("自營商買賣超股數");
+  const iTotal = at("三大法人買賣超股數");
+  if (iCode < 0 || iForeign < 0 || iTrust < 0) return null;
+  const map = new Map<string, ChipRow>();
+  for (const row of json.data) {
+    const code = row[iCode]?.trim();
+    if (!code) continue;
+    const foreignBase = num(row[iForeign]) ?? 0;
+    const foreignDealer = iForeignDealer >= 0 ? (num(row[iForeignDealer]) ?? 0) : 0;
+    map.set(code, {
+      foreign: foreignBase + foreignDealer,
+      trust: num(row[iTrust]) ?? 0,
+      dealer: iDealer >= 0 ? (num(row[iDealer]) ?? 0) : 0,
+      total: iTotal >= 0 ? (num(row[iTotal]) ?? 0) : 0,
+    });
+  }
+  const raw = json.date ?? ymd;
+  const date = raw.length === 8 ? `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}` : null;
+  return { date, map };
+}
+
 async function fetchChips(): Promise<{ date: string | null; map: Map<string, ChipRow> }> {
   const start = taipeiDay(Date.now()).replace(/-/g, "");
   for (let back = 0; back < 6; back += 1) {
-    const ymd = shiftYmd(start, back);
-    const json = await getJson<{
-      stat?: string;
-      date?: string;
-      fields?: string[];
-      data?: string[][];
-    }>(
-      `https://www.twse.com.tw/rwd/zh/fund/T86?response=json&date=${ymd}&selectType=ALLBUT0999`,
-    );
-    if (json.stat !== "OK" || !json.fields || !json.data?.length) continue;
-    const fields = json.fields;
-    const at = (name: string) => fields.indexOf(name);
-    const iCode = at("證券代號");
-    const iForeign = at("外陸資買賣超股數(不含外資自營商)");
-    const iForeignDealer = at("外資自營商買賣超股數");
-    const iTrust = at("投信買賣超股數");
-    const iDealer = at("自營商買賣超股數");
-    const iTotal = at("三大法人買賣超股數");
-    if (iCode < 0 || iForeign < 0 || iTrust < 0) continue;
-    const map = new Map<string, ChipRow>();
-    for (const row of json.data) {
-      const code = row[iCode]?.trim();
-      if (!code) continue;
-      const foreignBase = num(row[iForeign]) ?? 0;
-      const foreignDealer = iForeignDealer >= 0 ? (num(row[iForeignDealer]) ?? 0) : 0;
-      map.set(code, {
-        foreign: foreignBase + foreignDealer,
-        trust: num(row[iTrust]) ?? 0,
-        dealer: iDealer >= 0 ? (num(row[iDealer]) ?? 0) : 0,
-        total: iTotal >= 0 ? (num(row[iTotal]) ?? 0) : 0,
-      });
-    }
-    const raw = json.date ?? ymd;
-    const date = raw.length === 8 ? `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}` : null;
-    return { date, map };
+    const day = await fetchT86(shiftYmd(start, back));
+    if (day) return day;
   }
   return { date: null, map: new Map() };
+}
+
+// 過去的交易日資料不會再變，記在記憶體裡；證交所會擋太密集的請求，所以逐日、間隔查詢。
+const t86Past = new Map<string, T86Day | null>();
+let historyInflight: { key: string; promise: Promise<T86Day[]> } | null = null;
+
+function isWeekend(ymd: string) {
+  const day = new Date(Date.UTC(Number(ymd.slice(0, 4)), Number(ymd.slice(4, 6)) - 1, Number(ymd.slice(6, 8)))).getUTCDay();
+  return day === 0 || day === 6;
+}
+
+async function buildChipHistory(latestYmd: string, need: number): Promise<T86Day[]> {
+  const found: T86Day[] = [];
+  for (let back = 1; back <= 14 && found.length < need; back += 1) {
+    const ymd = shiftYmd(latestYmd, back);
+    if (isWeekend(ymd)) continue;
+    if (!t86Past.has(ymd)) {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      try {
+        t86Past.set(ymd, await fetchT86(ymd));
+      } catch {
+        break; // 被限流或網路問題：用已經拿到的天數就好
+      }
+    }
+    const day = t86Past.get(ymd);
+    if (day) found.push(day);
+  }
+  return found.reverse();
+}
+
+function chipHistory(latestYmd: string, need = 4): Promise<T86Day[]> {
+  const key = `${latestYmd}:${need}`;
+  if (historyInflight?.key === key) return historyInflight.promise;
+  const promise = buildChipHistory(latestYmd, need)
+    .catch(() => [] as T86Day[])
+    .finally(() => {
+      if (historyInflight?.key === key) historyInflight = null;
+    });
+  historyInflight = { key, promise };
+  return promise;
+}
+
+interface MarginRaw {
+  marginBal: number;
+  marginPrev: number;
+  marginLimit: number | null;
+  shortBal: number;
+  shortPrev: number;
+}
+
+function pick(row: Record<string, string>, ...names: string[]): number | null {
+  for (const name of names) {
+    const value = num(row[name]);
+    if (value != null) return value;
+  }
+  return null;
+}
+
+/** 證交所融資融券彙總（單位：張），只有最新一個交易日。 */
+async function fetchMargin(): Promise<Map<string, MarginRaw>> {
+  const rows = await getJson<Array<Record<string, string>>>(
+    "https://openapi.twse.com.tw/v1/exchangeReport/MI_MARGN",
+  );
+  const map = new Map<string, MarginRaw>();
+  if (!Array.isArray(rows)) return map;
+  for (const row of rows) {
+    const code = (row["股票代號"] ?? row["Code"] ?? row["證券代號"])?.trim();
+    if (!code) continue;
+    const marginBal = pick(row, "融資今日餘額");
+    const marginPrev = pick(row, "融資前日餘額");
+    const shortBal = pick(row, "融券今日餘額");
+    const shortPrev = pick(row, "融券前日餘額");
+    if (marginBal == null || marginPrev == null || shortBal == null || shortPrev == null) continue;
+    map.set(code, {
+      marginBal,
+      marginPrev,
+      marginLimit: pick(row, "融資限額"),
+      shortBal,
+      shortPrev,
+    });
+  }
+  return map;
+}
+
+async function within<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  const wait = new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms));
+  return Promise.race([promise, wait]);
 }
 
 async function fetchFundamentals(): Promise<Map<string, FundaRow>> {
@@ -309,6 +417,8 @@ function toRow(
   chip: ChipRow | undefined,
   funda: FundaRow | undefined,
   holders: HolderInfo | undefined,
+  flow: FlowInfo | null,
+  marginRaw: MarginRaw | undefined,
   settlement: boolean,
   benchRet20: number | null,
 ): StockRow | null {
@@ -410,6 +520,9 @@ function toRow(
     rs20: scored.rs20,
     bullStack: scored.bullStack,
     settlementPenalty: scored.settlementPenalty,
+    flow,
+    margin: marginRaw ? marginFrom(marginRaw, r2((change / prev.c) * 100)) : null,
+    sectorRatio: null,
     holderSide: scored.holderSide,
     holderLabel: scored.holderLabel,
     bigPct: holders ? holders.pct : null,
@@ -425,10 +538,11 @@ async function buildScan(): Promise<ScanResult> {
   const scannedAt = Date.now();
   const weekday = taipeiWeekday(scannedAt);
   try {
-    const [chipResult, fundaResult, holderMap, benchBars, charts] = await Promise.all([
+    const [chipResult, fundaResult, holderMap, marginMap, benchBars, charts] = await Promise.all([
       fetchChips().catch(() => ({ date: null, map: new Map<string, ChipRow>() })),
       fetchFundamentals().catch(() => new Map<string, FundaRow>()),
       holdersWithin(HOLDER_WAIT_MS),
+      fetchMargin().catch(() => new Map<string, MarginRaw>()),
       fetchBars(BENCHMARK.code).catch(() => [] as Bar[]),
       mapPool(UNIVERSE, 8, async (stock) => {
         try {
@@ -439,6 +553,21 @@ async function buildScan(): Promise<ScanResult> {
         }
       }),
     ]);
+
+    // 近幾個交易日的三大法人：給「連續買賣超」用。逾時就先略過，背景會繼續補進快取。
+    const history = chipResult.date
+      ? await within(chipHistory(chipResult.date.replace(/-/g, "")), 12000, [] as T86Day[])
+      : ([] as T86Day[]);
+    const flowDays = history.length + (chipResult.map.size > 0 ? 1 : 0);
+    const flowOf = (code: string): FlowInfo | null => {
+      const today = chipResult.map.get(code);
+      if (!today || history.length === 0) return null;
+      const days = [...history.map((d) => d.map.get(code)), today];
+      return flowFrom(
+        days.map((d) => d?.foreign ?? 0),
+        days.map((d) => d?.trust ?? 0),
+      );
+    };
 
     const benchCloses = benchBars.map((bar) => bar.c);
     const benchRet20 = benchCloses.length > 21 ? trailingReturn(benchCloses, 20) : null;
@@ -467,6 +596,8 @@ async function buildScan(): Promise<ScanResult> {
         chipResult.map.get(item.stock.code),
         fundaResult.get(item.stock.code),
         holderMap.get(item.stock.code),
+        flowOf(item.stock.code),
+        marginMap.get(item.stock.code),
         weekday.isWednesday,
         benchRet20,
       );
@@ -483,6 +614,17 @@ async function buildScan(): Promise<ScanResult> {
       return { ok: false, error: "報價暫時取不到，稍後再掃一次。" };
     }
 
+    const sectors = sectorRotation(
+      charts
+        .filter((item) => item.bars.length >= 20 && !item.error)
+        .map((item) => ({
+          sector: item.stock.sector,
+          days: item.bars.slice(-20).map((bar): [string, number] => [taipeiDay(bar.t), bar.c * bar.v]),
+        })),
+    );
+    const ratioBySector = new Map(sectors.map((entry) => [entry.sector, entry.ratio]));
+    for (const row of rows) row.sectorRatio = ratioBySector.get(row.sector) ?? null;
+
     rows.sort((a, b) => b.flagshipScore - a.flagshipScore || a.code.localeCompare(b.code));
 
     return {
@@ -494,6 +636,8 @@ async function buildScan(): Promise<ScanResult> {
         (latest, info) => (latest == null || info.date > latest ? info.date : latest),
         null,
       ),
+      flowDays,
+      sectors,
       calendarDate: taipeiDay(scannedAt),
       settlement: weekday.isWednesday,
       weekdayLabel: weekday.label,

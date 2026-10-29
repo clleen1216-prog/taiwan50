@@ -43,7 +43,7 @@ function shortStatus(row: StockRow) {
 }
 
 function downloadCsv(rows: StockRow[]) {
-  const header = ["代號", "名稱", "產業", "現價", "漲跌幅", "糾結度", "量比", "外資張", "投信張", "SOP", "旗艦", "狀態", "籌碼", "千張大戶占比%", "週變化pp", "連續週數"];
+  const header = ["代號", "名稱", "產業", "現價", "漲跌幅", "糾結度", "量比", "外資張", "投信張", "SOP", "旗艦", "狀態", "籌碼", "千張大戶占比%", "週變化pp", "連續週數", "外資連續日", "投信連續日", "融資增減張", "融資使用率%"];
   const lines = rows.map((row) =>
     [
       row.code,
@@ -62,6 +62,10 @@ function downloadCsv(rows: StockRow[]) {
       row.bigPct ?? "",
       row.bigChange ?? "",
       row.bigStreak ?? "",
+      row.flow?.foreignStreak ?? "",
+      row.flow?.trustStreak ?? "",
+      row.margin?.marginChange ?? "",
+      row.margin?.marginUse ?? "",
     ].join(","),
   );
   const blob = new Blob([`\uFEFF${header.join(",")}\n${lines.join("\n")}`], {
@@ -364,6 +368,41 @@ function DeskBody({
         {data.holderDate ? `（集保週報 ${data.holderDate}）` : "（集保資料這輪沒取到，大戶加分暫停）"}
       </p>
 
+      {data.sectors.length > 0 ? (
+        <section className="mt-4">
+          <div className="mb-2 flex items-baseline justify-between gap-3">
+            <h2 className="text-sm font-medium">類股資金輪動</h2>
+            <p className="text-xs text-faint">觀察名單內 · 近 5 日 vs 近 20 日成交值占比 · 只顯示不計分</p>
+          </div>
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {data.sectors.map((entry) => (
+              <div
+                key={entry.sector}
+                className="shrink-0 rounded-xl bg-surface px-3 py-2 shadow-ring"
+                title={`${entry.sector}：近 5 日占比 ${entry.share5}%，近 20 日 ${entry.share20}%`}
+              >
+                <p className="text-xs text-muted">
+                  {entry.sector}
+                  <span className="ml-1 text-faint">{entry.stocks} 檔</span>
+                </p>
+                <p className="num mt-1 text-sm">
+                  <span
+                    className={cn(
+                      entry.trend === "in" && "text-up",
+                      entry.trend === "out" && "text-down",
+                      entry.trend === "flat" && "text-muted",
+                    )}
+                  >
+                    {entry.trend === "in" ? "流入" : entry.trend === "out" ? "流出" : "持平"} ×{entry.ratio.toFixed(2)}
+                  </span>
+                  <span className="ml-2 text-xs text-faint">{entry.share5}%</span>
+                </p>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       <section className="mt-4">
         <div className="mb-2 flex items-baseline justify-between gap-3">
           <h2 className="text-sm font-medium">{calls.title}</h2>
@@ -543,9 +582,11 @@ function DeskBody({
                     <td className="num hidden py-2 lg:table-cell">{row.volRatio.toFixed(2)}</td>
                     <td className={cn("num hidden py-2 lg:table-cell", row.foreign == null ? "text-faint" : toneClass(row.foreign))}>
                       {row.foreign == null ? "—" : fmtLots(row.foreign)}
+                      <StreakTag value={row.flow?.foreignStreak} />
                     </td>
                     <td className={cn("num hidden py-2 lg:table-cell", row.trust == null ? "text-faint" : toneClass(row.trust))}>
                       {row.trust == null ? "—" : fmtLots(row.trust)}
+                      <StreakTag value={row.flow?.trustStreak} />
                     </td>
                     <td className="num hidden py-2 xl:table-cell">
                       {row.bigPct == null ? (
@@ -616,6 +657,15 @@ function DeskBody({
   );
 }
 
+function StreakTag({ value }: { value: number | undefined }) {
+  if (!value || Math.abs(value) < 2) return null;
+  return (
+    <span className={cn("ml-1 text-xs", value > 0 ? "text-up" : "text-down")}>
+      {value > 0 ? `連買${value}` : `連賣${-value}`}
+    </span>
+  );
+}
+
 function Metric({ label, value, note }: { label: string; value: string; note: string }) {
   return (
     <div className="rounded-xl bg-surface p-4 shadow-ring">
@@ -682,7 +732,7 @@ function Methodology({ scanned }: { scanned: number }) {
           <div>
             <h3 className="font-medium text-fg">資料</h3>
             <p className="mt-2 text-pretty">
-              日線來自 Yahoo Finance，近一年，這輪掃到 {scanned} 檔。千張大戶占比用集保戶股權分散表（經 FinMind，每週五結算、週六公布，持股 1,000 張以上各級距加總），連續兩週以上增加才算集中，快取 6 小時，取不到就不加分也不扣分。三大法人用證交所 T86，外資是外陸資買賣超加上外資自營商，不是買進股數。本益比、殖利率、股價淨值比用證交所公開估值。觀察名單沿用原程式的 49 檔，不是每天重建的官方成分股。快取約 5 分鐘。原排程是台北時間 10:00、11:00、12:00、15:00 複核。
+              日線來自 Yahoo Finance，近一年，這輪掃到 {scanned} 檔。千張大戶占比用集保戶股權分散表（經 FinMind，每週五結算、週六公布，持股 1,000 張以上各級距加總），連續兩週以上增加才算集中，快取 6 小時，取不到就不加分也不扣分。資金動向（只顯示、不計分）：外資與投信連續買賣超用證交所 T86 回溯最近約 5 個交易日；融資融券用證交所彙總的單日餘額變化（增加 2% 以上且收紅標「追價」，減少 2% 以上且沒收黑標「沉澱」，是粗略判讀）；類股資金輪動只比較觀察名單內各類股的成交值占比，不是全市場。三大法人用證交所 T86，外資是外陸資買賣超加上外資自營商，不是買進股數。本益比、殖利率、股價淨值比用證交所公開估值。觀察名單沿用原程式的 49 檔，不是每天重建的官方成分股。快取約 5 分鐘。原排程是台北時間 10:00、11:00、12:00、15:00 複核。
             </p>
           </div>
           <div>
