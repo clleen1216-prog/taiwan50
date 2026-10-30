@@ -1,3 +1,8 @@
 {
-  "installCommand": "npm install --omit=dev --no-audit --no-fund"
+  "installCommand": "npm install --omit=dev --no-audit --no-fund",
+  "git": {
+    "deploymentEnabled": {
+      "data": false
+    }
+  }
 }
