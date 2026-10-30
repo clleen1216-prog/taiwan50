@@ -30,6 +30,7 @@ jobs:
       - name: Run snapshot
         working-directory: code
         env:
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
           SCAN_WAIT_MS: "120000"
           OUT_DIR: ${{ github.workspace }}/out/data
         run: npx -y tsx@4.19.2 --tsconfig tsconfig.json scripts/snapshot.ts tw

@@ -37,6 +37,8 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const ymdDash = (ymd: string) => `${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6, 8)}`;
 const today = new Date().toISOString().slice(0, 10);
 const str = (v: unknown) => (v == null ? "" : String(v));
+/** 資料來源默默失敗會讓回填看似成功卻缺資料，所以集中記錄，最後讓排程顯示失敗。 */
+const problems: string[] = [];
 
 const histDir = path.join(outDir, "history");
 const rawDir = path.join(histDir, "raw");
@@ -251,6 +253,9 @@ async function backfillTw() {
     });
     marginByDate.set(r.date!, m);
   }
+  if (t86ByDate.size < dates.length * 0.5) problems.push(`三大法人只有 ${t86ByDate.size}/${dates.length} 天（被限流或尚未跑完，可再執行一次續跑）`);
+  if (marginByDate.size < dates.length * 0.5) problems.push(`融資融券只有 ${marginByDate.size}/${dates.length} 天（被限流、尚未跑完，或欄位格式不同）`);
+  if (holderSeries.size < UNIVERSE.length * 0.8) problems.push(`集保大戶只有 ${holderSeries.size}/${UNIVERSE.length} 檔（FinMind 失敗或額度用完，可設 FINMIND_TOKEN）`);
   const idxByCode = new Map<string, Map<string, number>>();
   for (const [code, bars] of barsByCode) idxByCode.set(code, toMap(bars.map((b, i) => ({ d: dayOf(b), i: String(i) })), (r) => r.d!, (r) => Number(r.i)));
   const benchIdx = toMap(benchBars.map((b, i) => ({ d: dayOf(b), i: String(i) })), (r) => r.d!, (r) => Number(r.i));
@@ -340,6 +345,7 @@ async function backfillUs() {
   // ---- FRED ----
   const [rrp, walcl, tga] = await Promise.all([fetchFred("RRPONTSYD"), fetchFred("WALCL"), fetchFred("WTREGEN")]);
   console.log(`FRED：RRP ${rrp.length}、WALCL ${walcl.length}、TGA ${tga.length}`);
+  if (rrp.length === 0 || walcl.length === 0 || tga.length === 0) problems.push("FRED 流動性資料不完整");
 
   // ---- SEC：8-K 財報日 + Form 4 買進 ----
   const earningsBySymbol = new Map<string, string[]>();
@@ -382,6 +388,11 @@ async function backfillUs() {
       console.log(`  ${s.symbol} SEC 資料取得失敗：${error instanceof Error ? error.message : error}`);
     }
   }
+  const needSec = US_UNIVERSE.filter((s) => !s.foreignIssuer).length;
+  if (coverageBySymbol.size < needSec) {
+    problems.push(`SEC 申報只取得 ${coverageBySymbol.size}/${needSec} 檔。最常見原因是 SEC 拒絕了 User-Agent（需要含聯絡信箱），請設定 SEC_USER_AGENT`);
+  }
+  if (earningsBySymbol.size === 0) problems.push("沒有取得任何財報日（8-K）");
   console.log(`待讀 Form 4：${todo.length} 份`);
   let processed = 0;
   await mapPool(todo, 4, async (item) => {
@@ -406,6 +417,8 @@ async function backfillUs() {
     await sleep(110);
   });
   await flushSec();
+  if (todo.length > 0 && processed === 0) problems.push("Form 4 一份都沒讀到");
+  if (processed > 0) console.log(`Form 4 讀取完成：${processed} 份，買進紀錄累計 ${buyRows.length} 筆`);
   for (const r of buyRows) {
     const list = buysBySymbol.get(r.symbol!) ?? [];
     list.push({
@@ -480,6 +493,12 @@ async function main() {
   if (market === "tw") await backfillTw();
   else if (market === "us") await backfillUs();
   else throw new Error("用法：backfill.ts tw|us");
+  if (problems.length > 0) {
+    console.error("\n回填有缺漏（已存下抓到的部分）：");
+    for (const p of problems) console.error(` - ${p}`);
+    process.exit(1);
+  }
+  console.log("\n回填完成，沒有發現缺漏");
 }
 
 main().catch((error) => {

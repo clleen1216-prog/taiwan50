@@ -33,6 +33,7 @@ jobs:
       - name: Run backfill
         working-directory: code
         env:
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
           YEARS: ${{ inputs.years }}
           MAX_MINUTES: "300"
           OUT_DIR: ${{ github.workspace }}/out/data

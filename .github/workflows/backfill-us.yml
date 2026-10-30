@@ -33,6 +33,7 @@ jobs:
       - name: Run backfill
         working-directory: code
         env:
+          SEC_USER_AGENT: ${{ vars.SEC_USER_AGENT }}
           YEARS: ${{ inputs.years }}
           MAX_MINUTES: "300"
           OUT_DIR: ${{ github.workspace }}/out/data
