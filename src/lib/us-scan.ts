@@ -13,13 +13,18 @@ import {
 } from "@/lib/score";
 import {
   daysUntil,
+  expectedMoveFrom,
   liquidityFrom,
+  netLiquidityFrom,
   parseForm4Purchases,
+  pickExpiry,
   parseFredCsv,
   summarizeInsiders,
   type InsiderBuy,
   type InsiderSummary,
   type Liquidity,
+  type NetLiquidity,
+  type OptionQuote,
 } from "@/lib/us-extra";
 
 const TTL_MS = 5 * 60 * 1000;
@@ -71,6 +76,10 @@ export interface UsRow {
   /** 距離財報幾天；null = 抓不到財報日（不是「安全」） */
   earningsDays: number | null;
   earningsNear: boolean;
+  /** 財報前後市場預期波動（ATM 跨式 ÷ 現價），只顯示不計分 */
+  impliedMovePct: number | null;
+  impliedIv: number | null;
+  impliedExpiry: string | null;
   insiderApplicable: boolean;
   insiderKnown: boolean;
   insiderBought: boolean;
@@ -88,6 +97,7 @@ export interface UsScanOk {
   sessionDate: string;
   benchmark: { price: number; changePct: number; ret20: number | null } | null;
   liquidity: Liquidity;
+  netLiquidity: NetLiquidity;
   etfs: EtfFlow[];
   earningsKnown: number;
   insiderKnown: number;
@@ -112,11 +122,24 @@ function sessionDay(ms: number) {
 
 // ---------- 總經流動性 (FRED ON RRP) ----------
 
-async function fetchLiquidity(): Promise<Liquidity> {
-  const text = await fetchText("https://fred.stlouisfed.org/graph/fredgraph.csv?id=RRPONTSYD", {
+async function fetchFred(id: string) {
+  const text = await fetchText(`https://fred.stlouisfed.org/graph/fredgraph.csv?id=${id}`, {
     "User-Agent": BROWSER_UA,
   });
-  return liquidityFrom(parseFredCsv(text));
+  return parseFredCsv(text);
+}
+
+/** ON RRP（每日）與淨流動性（聯準會資產 − TGA − RRP，每週）。其中一項失敗不影響另一項。 */
+async function fetchLiquidities(): Promise<{ rrp: Liquidity; net: NetLiquidity }> {
+  const [rrpSeries, walcl, tga] = await Promise.all([
+    fetchFred("RRPONTSYD").catch(() => [] as Array<[string, number]>),
+    fetchFred("WALCL").catch(() => [] as Array<[string, number]>),
+    fetchFred("WTREGEN").catch(() => [] as Array<[string, number]>),
+  ]);
+  return {
+    rrp: liquidityFrom(rrpSeries),
+    net: netLiquidityFrom(walcl, tga, rrpSeries),
+  };
 }
 
 // ---------- 財報日 (Yahoo quoteSummary, 需要 crumb) ----------
@@ -161,6 +184,53 @@ async function fetchEarningsMs(symbol: string, now: number): Promise<number | nu
     .filter((ms) => Number.isFinite(ms) && daysUntil(ms, now) >= 0)
     .sort((a, b) => a - b);
   return future[0] ?? null;
+}
+
+// ---------- 財報週預期波動 (Yahoo 選擇權鏈) ----------
+
+interface ChainResult {
+  expirationDates?: number[];
+  quote?: { regularMarketPrice?: number };
+  options?: Array<{ calls?: OptionQuote[]; puts?: OptionQuote[] }>;
+}
+
+async function fetchChain(symbol: string, dateSec?: number): Promise<ChainResult | null> {
+  const { crumb, cookie } = await yahooSession();
+  const text = await fetchText(
+    `https://query2.finance.yahoo.com/v7/finance/options/${symbol}?crumb=${encodeURIComponent(crumb)}${dateSec ? `&date=${dateSec}` : ""}`,
+    { "User-Agent": BROWSER_UA, Cookie: cookie },
+  );
+  const json = JSON.parse(text) as { optionChain?: { result?: ChainResult[] } };
+  return json.optionChain?.result?.[0] ?? null;
+}
+
+const impliedCache = new Map<string, { at: number; value: { movePct: number; iv: number | null; expiry: string } | null }>();
+
+async function fetchImpliedMove(symbol: string, earningsMs: number, spotFallback: number) {
+  const hit = impliedCache.get(symbol);
+  if (hit && Date.now() - hit.at < 30 * 60 * 1000) return hit.value;
+  let value: { movePct: number; iv: number | null; expiry: string } | null = null;
+  try {
+    const first = await fetchChain(symbol);
+    const expiry = pickExpiry(first?.expirationDates ?? [], earningsMs);
+    if (expiry) {
+      const chain = await fetchChain(symbol, expiry);
+      const opt = chain?.options?.[0];
+      const spot = chain?.quote?.regularMarketPrice ?? first?.quote?.regularMarketPrice ?? spotFallback;
+      const move = opt ? expectedMoveFrom(opt.calls ?? [], opt.puts ?? [], spot) : null;
+      if (move) {
+        value = {
+          movePct: move.movePct,
+          iv: move.iv,
+          expiry: new Date(expiry * 1000).toISOString().slice(0, 10),
+        };
+      }
+    }
+  } catch {
+    value = null;
+  }
+  impliedCache.set(symbol, { at: Date.now(), value });
+  return value;
 }
 
 // ---------- 內部人 Form 4 (SEC EDGAR) ----------
@@ -443,6 +513,9 @@ function toUsRow(
     rs20: base.rs20,
     earningsDays,
     earningsNear,
+    impliedMovePct: null,
+    impliedIv: null,
+    impliedExpiry: null,
     insiderApplicable,
     insiderKnown,
     insiderBought,
@@ -461,8 +534,8 @@ let inflight: Promise<UsScanResult> | null = null;
 async function buildScan(): Promise<UsScanResult> {
   const scannedAt = Date.now();
   try {
-    const [liquidity, slow, etfBars, benchBars, charts] = await Promise.all([
-      fetchLiquidity().catch(() => liquidityFrom([])),
+    const [liquidities, slow, etfBars, benchBars, charts] = await Promise.all([
+      fetchLiquidities().catch(() => ({ rrp: liquidityFrom([]), net: netLiquidityFrom([], [], []) })),
       slowWithin(SLOW_WAIT_MS),
       mapPool([...US_SECTOR_ETFS], 4, async (etf) => ({
         etf,
@@ -511,13 +584,30 @@ async function buildScan(): Promise<UsScanResult> {
     }
     if (rows.length === 0) return { ok: false, error: "美股報價暫時取不到，稍後再掃一次。" };
 
+    // 財報 7 天內的才查選擇權（兩次請求 / 檔），逾時就先不顯示，背景會補進快取
+    const targets = rows.filter((r) => r.earningsDays != null && r.earningsDays >= 0 && r.earningsDays <= 7);
+    await Promise.race([
+      mapPool(targets, 3, async (row) => {
+        const earningsMs = slow.earnings.get(row.symbol);
+        if (earningsMs == null) return;
+        const move = await fetchImpliedMove(row.symbol, earningsMs, row.price);
+        if (move) {
+          row.impliedMovePct = move.movePct;
+          row.impliedIv = move.iv;
+          row.impliedExpiry = move.expiry;
+        }
+      }),
+      new Promise((resolve) => setTimeout(resolve, 10000)),
+    ]);
+
     rows.sort((a, b) => b.flagshipScore - a.flagshipScore || a.symbol.localeCompare(b.symbol));
     return {
       ok: true,
       scannedAt,
       sessionDate: sessionMs ? sessionDay(sessionMs) : sessionDay(scannedAt),
       benchmark,
-      liquidity,
+      liquidity: liquidities.rrp,
+      netLiquidity: liquidities.net,
       etfs,
       earningsKnown: slow.earnings.size,
       insiderKnown: [...slow.insiders.values()].filter((r) => r.status === "ok").length,

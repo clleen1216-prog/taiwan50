@@ -90,3 +90,60 @@ describe("財報日倒數", () => {
     assert.equal(daysUntil(NOW - 86_400_000, NOW), -1);
   });
 });
+
+import { expectedMoveFrom, netLiquidityFrom, pickExpiry } from "./us-extra.ts";
+
+describe("淨流動性", () => {
+  const weeks = ["2026-09-23", "2026-09-30", "2026-10-07", "2026-10-14", "2026-10-21", "2026-10-28"];
+  const walcl = weeks.map((d, i): [string, number] => [d, 6_600_000 + i * 20_000]); // 百萬
+  const tga = weeks.map((d, i): [string, number] => [d, 800_000 + i * 40_000]);
+  const rrp: Array<[string, number]> = weeks.map((d): [string, number] => [d, 10]);
+
+  it("單位對齊：資產 − TGA − RRP（十億美元）", () => {
+    const r = netLiquidityFrom(walcl, tga, rrp);
+    assert.equal(r.fedAssets, 6700);
+    assert.equal(r.tga, 1000);
+    assert.equal(r.value, 6700 - 1000 - 10);
+  });
+  it("4 週變化超過門檻才算擴張或收縮", () => {
+    assert.equal(netLiquidityFrom(walcl, tga, rrp).changeAbs, -80); // 資產 +80B、TGA +160B
+    assert.equal(netLiquidityFrom(walcl, tga, rrp).status, "neutral");
+    const heavyTga = weeks.map((d, i): [string, number] => [d, 800_000 + i * 60_000]);
+    assert.equal(netLiquidityFrom(walcl, heavyTga, rrp).status, "tightening"); // TGA 吸走流動性
+    const flatTga = weeks.map((d): [string, number] => [d, 800_000]);
+    assert.equal(netLiquidityFrom(walcl, flatTga, rrp).changeAbs, 80);
+    assert.equal(netLiquidityFrom(walcl, flatTga, rrp).status, "neutral");
+    const bigWalcl = weeks.map((d, i): [string, number] => [d, 6_600_000 + i * 60_000]);
+    assert.equal(netLiquidityFrom(bigWalcl, flatTga, rrp).status, "easing");
+  });
+  it("RRP 取不晚於該週的最近值；資料不足 unknown；TGA 若已是十億美元也能處理", () => {
+    const sparseRrp: Array<[string, number]> = [["2026-09-20", 5], ["2026-10-10", 50]];
+    const r = netLiquidityFrom(walcl, tga, sparseRrp);
+    assert.equal(r.rrp, 50);
+    assert.equal(netLiquidityFrom(walcl.slice(0, 3), tga, rrp).status, "unknown");
+    const tgaB = weeks.map((d): [string, number] => [d, 800]);
+    assert.equal(netLiquidityFrom(walcl, tgaB, rrp).tga, 800);
+  });
+});
+
+describe("財報週預期波動", () => {
+  it("挑財報日之後最近的到期日", () => {
+    const earn = Date.parse("2026-10-29T21:00:00Z");
+    const exps = [Date.parse("2026-10-29T00:00:00Z"), Date.parse("2026-10-30T00:00:00Z"), Date.parse("2026-11-06T00:00:00Z")].map((ms) => ms / 1000);
+    assert.equal(pickExpiry(exps, earn), exps[1]);
+    assert.equal(pickExpiry([exps[0]!], earn), null);
+  });
+  it("ATM 跨式：中價相加 ÷ 現價", () => {
+    const calls = [{ strike: 95, bid: 8, ask: 8.2 }, { strike: 100, bid: 4.9, ask: 5.1, impliedVolatility: 0.8 }, { strike: 105, bid: 2, ask: 2.2 }];
+    const puts = [{ strike: 95, bid: 1.9, ask: 2.1 }, { strike: 100, bid: 4.4, ask: 4.6, impliedVolatility: 0.7 }];
+    const m = expectedMoveFrom(calls, puts, 101)!;
+    assert.equal(m.strike, 100);
+    assert.equal(m.movePct, 9.41); // (5.0 + 4.5) / 101
+    assert.equal(m.iv, 75);
+  });
+  it("沒有報價或履約價對不上回 null；沒有買賣價時用成交價", () => {
+    assert.equal(expectedMoveFrom([], [], 100), null);
+    assert.equal(expectedMoveFrom([{ strike: 100 }], [{ strike: 100, lastPrice: 3 }], 100), null);
+    assert.equal(expectedMoveFrom([{ strike: 100, lastPrice: 3 }], [{ strike: 100, lastPrice: 3 }], 100)?.movePct, 6);
+  });
+});

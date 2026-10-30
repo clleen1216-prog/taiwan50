@@ -138,3 +138,121 @@ export function daysUntil(earningsMs: number, nowMs: number): number {
   const day = (ms: number) => Math.floor(ms / 86_400_000);
   return day(earningsMs) - day(nowMs);
 }
+
+// ---------- 淨流動性：聯準會資產 − 財政部帳戶 (TGA) − 隔夜逆回購 (ON RRP) ----------
+
+export interface NetLiquidity {
+  /** 十億美元 */
+  value: number;
+  prev: number;
+  changeAbs: number;
+  fedAssets: number;
+  tga: number;
+  rrp: number;
+  date: string;
+  status: "easing" | "tightening" | "neutral" | "unknown";
+  label: string;
+}
+
+/**
+ * WALCL（聯準會總資產）與 WTREGEN（TGA）是每週三的水位，單位百萬美元；
+ * RRPONTSYD 是每日、單位十億美元。逐週對齊後，近 4 週淨流動性增加 ≥ 100B 視為擴張，減少 ≥ 100B 視為收縮。
+ */
+export function netLiquidityFrom(
+  walcl: Array<[string, number]>,
+  tga: Array<[string, number]>,
+  rrp: Array<[string, number]>,
+  thresholdB = 100,
+): NetLiquidity {
+  const unknown: NetLiquidity = {
+    value: 0, prev: 0, changeAbs: 0, fedAssets: 0, tga: 0, rrp: 0, date: "",
+    status: "unknown", label: "淨流動性資料未取得",
+  };
+  const tgaMap = new Map(tga);
+  const rrpSorted = [...rrp].sort((a, b) => a[0].localeCompare(b[0]));
+  // 單位防呆：TGA 正常是百萬美元（約 80 萬），若數字小於 2 萬就當作已經是十億美元
+  const tgaScale = tga.length > 0 && Math.max(...tga.map((t) => t[1])) < 20_000 ? 1 : 1000;
+  const points: Array<{ date: string; net: number; fed: number; tga: number; rrp: number }> = [];
+  for (const [date, fedM] of walcl) {
+    const tgaV = tgaMap.get(date);
+    if (tgaV == null) continue;
+    let rrpV: number | null = null;
+    for (const [d, v] of rrpSorted) {
+      if (d <= date) rrpV = v;
+      else break;
+    }
+    if (rrpV == null) continue;
+    const fed = fedM / 1000;
+    const t = tgaV / tgaScale;
+    points.push({ date, net: fed - t - rrpV, fed, tga: t, rrp: rrpV });
+  }
+  if (points.length < 5) return unknown;
+  const last = points[points.length - 1]!;
+  const prev = points[points.length - 5]!;
+  const changeAbs = last.net - prev.net;
+  const status = changeAbs >= thresholdB ? "easing" : changeAbs <= -thresholdB ? "tightening" : "neutral";
+  return {
+    value: last.net,
+    prev: prev.net,
+    changeAbs,
+    fedAssets: last.fed,
+    tga: last.tga,
+    rrp: last.rrp,
+    date: last.date,
+    status,
+    label: status === "easing" ? "淨流動性擴張" : status === "tightening" ? "淨流動性收縮" : "淨流動性持平",
+  };
+}
+
+// ---------- 財報週預期波動（選擇權跨式報價） ----------
+
+export interface OptionQuote {
+  strike: number;
+  bid?: number;
+  ask?: number;
+  lastPrice?: number;
+  impliedVolatility?: number;
+}
+
+export interface ExpectedMove {
+  strike: number;
+  movePct: number;
+  /** 年化隱含波動率 %，兩邊平均 */
+  iv: number | null;
+}
+
+/** 財報日之後（嚴格晚於財報當天）最近的到期日；expirations 是 epoch 秒。 */
+export function pickExpiry(expirations: number[], earningsMs: number): number | null {
+  const day = (ms: number) => Math.floor(ms / 86_400_000);
+  const sorted = [...expirations].sort((a, b) => a - b);
+  return sorted.find((sec) => day(sec * 1000) > day(earningsMs)) ?? null;
+}
+
+function mid(q: OptionQuote): number | null {
+  if (q.bid && q.ask && q.bid > 0 && q.ask >= q.bid) return (q.bid + q.ask) / 2;
+  return q.lastPrice && q.lastPrice > 0 ? q.lastPrice : null;
+}
+
+/** 履約價最接近現價的買權 + 賣權中價 ÷ 現價 = 市場預期的財報前後波動幅度。 */
+export function expectedMoveFrom(calls: OptionQuote[], puts: OptionQuote[], spot: number): ExpectedMove | null {
+  if (!(spot > 0)) return null;
+  const putByStrike = new Map(puts.map((p) => [p.strike, p]));
+  let best: { call: OptionQuote; put: OptionQuote } | null = null;
+  for (const call of calls) {
+    const put = putByStrike.get(call.strike);
+    if (!put) continue;
+    if (!best || Math.abs(call.strike - spot) < Math.abs(best.call.strike - spot)) best = { call, put };
+  }
+  if (!best) return null;
+  const c = mid(best.call);
+  const p = mid(best.put);
+  if (c == null || p == null) return null;
+  const ivs = [best.call.impliedVolatility, best.put.impliedVolatility].filter(
+    (v): v is number => typeof v === "number" && v > 0,
+  );
+  return {
+    strike: best.call.strike,
+    movePct: Math.round(((c + p) / spot) * 10000) / 100,
+    iv: ivs.length ? Math.round((ivs.reduce((s, v) => s + v, 0) / ivs.length) * 1000) / 10 : null,
+  };
+}

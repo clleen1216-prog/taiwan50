@@ -128,25 +128,31 @@ export function UsDesk({ initial }: { initial: UsScanResult }) {
 
       {data.ok ? (
         <main className={cn("mx-auto max-w-[1440px] px-4 py-4 md:px-6", selectedRow && "xl:pr-96")}>
-          <p
-            className={cn(
-              "mb-4 rounded-xl bg-surface px-4 py-3 text-sm text-pretty shadow-ring",
-              data.liquidity.status === "tightening" && "text-up",
-            )}
-          >
-            <span className="font-medium text-gold">總經流動性。 </span>
-            {data.liquidity.status === "unknown"
-              ? "FRED 隔夜逆回購資料這輪沒取到。"
-              : `${data.liquidity.label}：ON RRP 餘額 ${data.liquidity.value.toFixed(1)}B，近 5 個交易日${data.liquidity.changeAbs >= 0 ? "增加" : "減少"} ${Math.abs(data.liquidity.changeAbs).toFixed(1)}B。`}
-            這是整體背景，不會幫個股加減分，因為對每檔一視同仁的扣分不影響排名。
-          </p>
+          <div className="mb-4 rounded-xl bg-surface px-4 py-3 text-sm text-pretty shadow-ring">
+            <p>
+              <span className="font-medium text-gold">總經流動性。 </span>
+              {data.netLiquidity.status === "unknown"
+                ? "FRED 淨流動性資料這輪沒取到。"
+                : `${data.netLiquidity.label}：聯準會資產 ${fmtB(data.netLiquidity.fedAssets)} − 財政部帳戶 ${fmtB(data.netLiquidity.tga)} − 逆回購 ${fmtB(data.netLiquidity.rrp)} = ${fmtB(data.netLiquidity.value)}，近 4 週${data.netLiquidity.changeAbs >= 0 ? "增加" : "減少"} ${Math.abs(data.netLiquidity.changeAbs).toFixed(0)}B（${data.netLiquidity.date}）。`}
+            </p>
+            {data.liquidity.status !== "unknown" ? (
+              <p className="mt-1 text-xs text-muted">
+                ON RRP 單項：{data.liquidity.label}，餘額 {data.liquidity.value.toFixed(1)}B，近 5 個交易日
+                {data.liquidity.changeAbs >= 0 ? "增加" : "減少"} {Math.abs(data.liquidity.changeAbs).toFixed(1)}B。
+              </p>
+            ) : null}
+            <p className="mt-1 text-xs text-faint">整體背景，不幫個股加減分。</p>
+          </div>
 
           {counts.earnings > 0 ? (
             <p className="mb-4 rounded-xl bg-surface px-4 py-3 text-sm text-pretty shadow-ring">
               <span className="font-medium text-up">財報週。 </span>
               {rows
                 .filter((r) => r.earningsNear)
-                .map((r) => `${r.symbol}（${earningsText(r)}）`)
+                .map(
+                  (r) =>
+                    `${r.symbol}（${earningsText(r)}${r.impliedMovePct != null ? `，市場預期 ±${r.impliedMovePct}%` : ""}）`,
+                )
                 .join("、")}
               ：已扣分並暫停追價，防範 IV Crush。
             </p>
@@ -246,6 +252,7 @@ export function UsDesk({ initial }: { initial: UsScanResult }) {
                     </p>
                     <p className="mt-2 text-xs text-muted">
                       糾結 {row.spreadPct.toFixed(2)}% · 量比 {row.volRatio.toFixed(2)} · {earningsText(row)}
+                      {row.impliedMovePct != null ? ` · 預期 ±${row.impliedMovePct}%` : ""}
                       {row.insiderBought ? " · 內部人買進" : ""}
                     </p>
                     <span className={cn("mt-3 inline-flex h-6 items-center rounded-md px-2 text-xs", kindTone(row))}>
@@ -275,7 +282,7 @@ export function UsDesk({ initial }: { initial: UsScanResult }) {
                 <div>
                   <h3 className="font-medium text-fg">資料與限制</h3>
                   <p className="mt-2 text-pretty">
-                    日線來自 Yahoo Finance。財報日來自 Yahoo quoteSummary，抓不到會明確標示「財報日未知」，不會當成安全。內部人用 SEC EDGAR 的 Form 4，只算交易代碼 P（公開市場買進）、官員或董事、近 30 天合計 ≥ $100K；賣出、股票授予、選擇權行權不算。ASML、TSM 是外國發行人，不申報 Form 4。流動性用 FRED 隔夜逆回購餘額的絕對變動。財報日與內部人快取 6 小時。產業輪動用 SMH、XLK、IGV、QQQ 對 SPY 的 5 日與 20 日相對報酬，以及近 5 日對近 20 日的平均量比，只顯示、不計分。
+                    日線來自 Yahoo Finance。財報日來自 Yahoo quoteSummary，抓不到會明確標示「財報日未知」，不會當成安全。內部人用 SEC EDGAR 的 Form 4，只算交易代碼 P（公開市場買進）、官員或董事、近 30 天合計 ≥ $100K；賣出、股票授予、選擇權行權不算。ASML、TSM 是外國發行人，不申報 Form 4。流動性：淨流動性 = 聯準會總資產（WALCL）− 財政部帳戶（WTREGEN）− 隔夜逆回購（RRPONTSYD），每週三水位，近 4 週變動 100B 以上才標擴張或收縮；ON RRP 單項保留作參考。財報週預期波動：財報 7 天內的標的，用財報後最近到期日的平價買權加賣權中價除以現價，是 Yahoo 的延遲報價，可能缺資料。財報日與內部人快取 6 小時。產業輪動用 SMH、XLK、IGV、QQQ 對 SPY 的 5 日與 20 日相對報酬，以及近 5 日對近 20 日的平均量比，只顯示、不計分。
                   </p>
                 </div>
                 <div>
@@ -305,6 +312,10 @@ export function UsDesk({ initial }: { initial: UsScanResult }) {
       {selectedRow ? <UsPanel row={selectedRow} onClose={() => setSelected(null)} /> : null}
     </div>
   );
+}
+
+function fmtB(value: number) {
+  return `$${(value / 1000).toFixed(2)}T`;
 }
 
 function Metric({ label, value, note }: { label: string; value: number; note: string }) {
@@ -412,6 +423,13 @@ function UsPanel({ row, onClose }: { row: UsRow; onClose: () => void }) {
             <h3 className="text-sm font-medium">內部人與財報</h3>
             <p className="mt-2 text-sm text-pretty text-muted">{row.insiderNote}</p>
             <p className="mt-1 text-sm text-pretty text-muted">{earningsText(row)}</p>
+            {row.impliedMovePct != null ? (
+              <p className="mt-1 text-sm text-pretty text-muted">
+                選擇權預期財報前後波動 ±{row.impliedMovePct}%
+                {row.impliedIv != null ? `（隱含波動率 ${row.impliedIv}%）` : ""}，用 {row.impliedExpiry} 到期的平價跨式估算，
+                到期日晚於財報所以略為高估。只顯示，不計分。
+              </p>
+            ) : null}
           </section>
 
           <section>
