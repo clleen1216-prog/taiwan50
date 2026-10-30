@@ -107,7 +107,7 @@ export interface ScanOk {
 
 export type ScanResult = ScanOk | { ok: false; error: string };
 
-interface ChipRow {
+export interface ChipRow {
   foreign: number;
   trust: number;
   dealer: number;
@@ -159,8 +159,8 @@ export function r2(value: number) {
   return Math.round(value * 100) / 100;
 }
 
-export async function fetchBars(code: string, suffix = ".TW"): Promise<Bar[]> {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${code}${suffix}?range=1y&interval=1d&includePrePost=false`;
+export async function fetchBars(code: string, suffix = ".TW", range = "1y"): Promise<Bar[]> {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${code}${suffix}?range=${range}&interval=1d&includePrePost=false`;
   const json = await getJson<{
     chart?: {
       result?: Array<{
@@ -208,12 +208,12 @@ function shiftYmd(ymd: string, days: number) {
   return `${y}${m}${d}`;
 }
 
-interface T86Day {
+export interface T86Day {
   date: string | null;
   map: Map<string, ChipRow>;
 }
 
-async function fetchT86(ymd: string): Promise<T86Day | null> {
+export async function fetchT86(ymd: string): Promise<T86Day | null> {
   const json = await getJson<{
     stat?: string;
     date?: string;
@@ -297,7 +297,7 @@ function chipHistory(latestYmd: string, need = 4): Promise<T86Day[]> {
   return promise;
 }
 
-interface MarginRaw {
+export interface MarginRaw {
   marginBal: number;
   marginPrev: number;
   marginLimit: number | null;
@@ -416,7 +416,7 @@ async function holdersWithin(ms: number): Promise<Map<string, HolderInfo>> {
   return Promise.race([getHolders(), wait]);
 }
 
-function toRow(
+export function toRow(
   meta: { code: string; name: string; sector: string },
   bars: Bar[],
   chip: ChipRow | undefined,

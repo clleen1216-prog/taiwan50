@@ -37,7 +37,7 @@ const EARNINGS_PENALTY_FLAGSHIP = 30;
 
 const BROWSER_UA = "Mozilla/5.0 (compatible; Flagship50/1.0)";
 /** SEC 要求 User-Agent 標明用途與聯絡方式；可用環境變數 SEC_USER_AGENT 覆寫。 */
-function secUa() {
+export function secUa() {
   return (
     process.env.SEC_USER_AGENT?.trim() ||
     "Flagship50 personal research app (github.com/clleen1216-prog/taiwan50)"
@@ -109,7 +109,7 @@ export type UsScanResult = UsScanOk | { ok: false; error: string };
 
 // ---------- 通用抓取 ----------
 
-async function fetchText(url: string, headers: Record<string, string>): Promise<string> {
+export async function fetchText(url: string, headers: Record<string, string>): Promise<string> {
   const response = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
   if (!response.ok) throw new Error(String(response.status));
   return response.text();
@@ -121,7 +121,7 @@ function sessionDay(ms: number) {
 
 // ---------- 總經流動性 (FRED ON RRP) ----------
 
-async function fetchFred(id: string) {
+export async function fetchFred(id: string) {
   const text = await fetchText(`https://fred.stlouisfed.org/graph/fredgraph.csv?id=${id}`, {
     "User-Agent": BROWSER_UA,
   });
@@ -234,11 +234,11 @@ async function fetchImpliedMove(symbol: string, earningsMs: number, spotFallback
 
 // ---------- 內部人 Form 4 (SEC EDGAR) ----------
 
-type InsiderResult = { status: "ok"; summary: InsiderSummary } | { status: "fail" };
+export type InsiderResult = { status: "ok"; summary: InsiderSummary } | { status: "fail" };
 
 let cikCache: { at: number; map: Map<string, string> } | null = null;
 
-async function cikOf(symbol: string): Promise<string | null> {
+export async function cikOf(symbol: string): Promise<string | null> {
   if (!cikCache || Date.now() - cikCache.at > 24 * 60 * 60 * 1000) {
     const text = await fetchText("https://www.sec.gov/files/company_tickers.json", {
       "User-Agent": secUa(),
@@ -301,7 +301,7 @@ async function fetchInsider(symbol: string, now: number): Promise<InsiderResult>
 
 // ---------- 慢速資料 (財報日 / 內部人)，快取 6 小時 ----------
 
-interface SlowData {
+export interface SlowData {
   earnings: Map<string, number | null>;
   insiders: Map<string, InsiderResult>;
 }
@@ -360,7 +360,7 @@ async function slowWithin(ms: number): Promise<SlowData> {
 
 // ---------- 組成一列 ----------
 
-function toUsRow(
+export function toUsRow(
   meta: UsStock,
   bars: Bar[],
   benchRet20: number | null,

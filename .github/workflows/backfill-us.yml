@@ -1,0 +1,50 @@
+name: backfill-us
+# 手動觸發：回填歷史特徵到 data 分支的 data/history/。美股：8-K 財報日、Form 4 內部人、FRED 流動性（約 20 到 30 分鐘）
+# 可以重複執行：已經抓過的日期會跳過，被限流中斷後再跑一次就會接著做。
+on:
+  workflow_dispatch:
+    inputs:
+      years:
+        description: "回填幾年"
+        default: "3"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: snapshot-data
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: code
+      - uses: actions/checkout@v4
+        with:
+          ref: data
+          path: out
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run backfill
+        working-directory: code
+        env:
+          YEARS: ${{ inputs.years }}
+          MAX_MINUTES: "300"
+          OUT_DIR: ${{ github.workspace }}/out/data
+        run: npx -y tsx@4.19.2 --tsconfig tsconfig.json scripts/backfill.ts us
+      - name: Commit data
+        if: always()
+        working-directory: out
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && echo "no changes" && exit 0
+          git commit -m "backfill us $(date -u +%F)"
+          git pull --rebase origin data
+          git push origin HEAD:data
