@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
-  addDays, earningsDatesFrom8K, holderAsOf, insiderAsOf, isWednesday, liquidityAsOf, nextOnOrAfter, parseMarginDay,
+  addDays, earningsDatesFrom8K, holderAsOf, holderFields, parseTdccCsv, insiderAsOf, isWednesday, liquidityAsOf, nextOnOrAfter, parseMarginDay,
 } from "./backfill.ts";
 
 describe("日期工具", () => {
@@ -72,5 +72,31 @@ describe("流動性發布時間差", () => {
   it("週三水位要到週五才算可見", () => {
     assert.equal(liquidityAsOf(walcl, tga, rrp, "2026-10-29").net.date, "2026-10-21");
     assert.equal(liquidityAsOf(walcl, tga, rrp, "2026-10-30").net.date, "2026-10-28");
+  });
+});
+
+describe("融資限額欄位名稱", () => {
+  it("融資限額、融券限額這種名稱也能認", () => {
+    const fields = ["代號", "名稱", "買進", "賣出", "現金償還", "前日餘額", "今日餘額", "融資限額", "買進", "賣出", "現券償還", "前日餘額", "今日餘額", "融券限額"];
+    const row = ["2330", "台積電", "1", "2", "3", "10,000", "10,300", "50,000", "1", "2", "3", "480", "500", "9,999"];
+    assert.equal(parseMarginDay({ fields, data: [row] }).get("2330")?.marginLimit, 50000);
+  });
+});
+
+describe("集保開放資料", () => {
+  const rows = [
+    { "\uFEFF資料日期": "20261023", 證券代號: "2330", 持股分級: "15", 人數: "2,100", 股數: "21,000,000,000", "占集保庫存數比例%": "70.52" },
+    { "\uFEFF資料日期": "20261023", 證券代號: "2330", 持股分級: "14", 人數: "300", 股數: "1", "占集保庫存數比例%": "3.00" },
+    { "\uFEFF資料日期": "20261023", 證券代號: "9999", 持股分級: "15", 人數: "1", 股數: "1", "占集保庫存數比例%": "50" },
+  ];
+  it("只取名單內、分級 15 的大戶占比，容忍 BOM", () => {
+    const w = parseTdccCsv(rows, new Set(["2330"]));
+    assert.deepEqual(w, [{ date: "2026-10-23", code: "2330", bigPct: 70.52, bigPeople: 2100, bigShares: 21000000000 }]);
+  });
+  it("連續增持換成欄位", () => {
+    assert.equal(holderFields(null), null);
+    assert.equal(holderFields({ pct: 70, change: 0.2, streak: 2, date: "d" })?.holderSide, "concentrating");
+    assert.equal(holderFields({ pct: 70, change: -0.2, streak: -3, date: "d" })?.holderSide, "distributing");
+    assert.equal(holderFields({ pct: 70, change: 0.1, streak: 1, date: "d" })?.holderSide, "neutral");
   });
 });

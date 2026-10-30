@@ -28,6 +28,7 @@ import {
   type PricePoint,
   type Record_,
 } from "../src/lib/snapshot";
+import { holderAsOf, holderFields, parseTdccCsv } from "../src/lib/backfill";
 
 const market = process.argv[2];
 const outDir = path.resolve(process.env.OUT_DIR ?? "data");
@@ -74,6 +75,39 @@ async function rebuildLabels(folder: string, idColumn: string) {
   console.log(`labels/${folder}.csv: ${labels.length} 列`);
 }
 
+/**
+ * 千張大戶：FinMind 的股權分散表歷史需要付費等級，免費的是集保結算所開放資料，但它只給「最新一週」。
+ * 所以每天抓一次、把新的一週累積進 data/holders/tdcc.csv，連續增持天數就會隨時間長出來。
+ */
+const TDCC_COLUMNS = ["date", "code", "big_pct", "big_people", "big_shares"] as const;
+
+async function collectTdcc(): Promise<Map<string, Array<[string, number]>>> {
+  const file = path.join(outDir, "holders", "tdcc.csv");
+  let rows: Array<Record<string, unknown>> = await readRows(file);
+  try {
+    const response = await fetch("https://opendata.tdcc.com.tw/getOD.ashx?id=1-5", {
+      signal: AbortSignal.timeout(120_000),
+    });
+    if (!response.ok) throw new Error(String(response.status));
+    const weeks = parseTdccCsv(parseCsv(await response.text()), new Set(UNIVERSE.map((u) => u.code)));
+    const incoming = weeks.map((w): Record_ => ({ date: w.date, code: w.code, big_pct: w.bigPct, big_people: w.bigPeople, big_shares: w.bigShares }));
+    rows = mergeRows(rows as Array<Record<string, string>>, incoming, TDCC_COLUMNS, (r) => `${r.date}|${r.code}`);
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, toCsv(rows as Record_[], TDCC_COLUMNS));
+    console.log(`holders/tdcc.csv: 本週 ${weeks.length} 檔，累積 ${rows.length} 列`);
+  } catch (error) {
+    console.log(`集保開放資料取得失敗（沿用已累積的）：${error instanceof Error ? error.message : error}`);
+  }
+  const series = new Map<string, Array<[string, number]>>();
+  for (const r of rows) {
+    const list = series.get(String(r.code)) ?? [];
+    list.push([String(r.date), Number(r.big_pct)]);
+    series.set(String(r.code), list);
+  }
+  for (const list of series.values()) list.sort((a, b) => a[0].localeCompare(b[0]));
+  return series;
+}
+
 async function main() {
   if (market === "tw") {
     const scan = await loadTw(true);
@@ -81,6 +115,22 @@ async function main() {
     if (scan.rows.length < UNIVERSE.length * 0.8) {
       throw new Error(`台股只掃到 ${scan.rows.length}/${UNIVERSE.length} 檔，資料不完整，不存檔`);
     }
+    // FinMind 沒取到千張大戶時，用累積的集保週報補上（只補欄位，不改當時算好的分數）
+    const tdcc = await collectTdcc();
+    let filled = 0;
+    for (const row of scan.rows) {
+      if (row.bigPct != null) continue;
+      const info = holderAsOf(tdcc.get(row.code) ?? [], scan.sessionDate);
+      const f = holderFields(info);
+      if (!f || !info) continue;
+      row.bigPct = f.bigPct;
+      row.bigChange = f.bigChange;
+      row.bigStreak = f.bigStreak;
+      row.holderSide = f.holderSide;
+      if (!scan.holderDate || info.date > scan.holderDate) scan.holderDate = info.date;
+      filled += 1;
+    }
+    console.log(`千張大戶欄位由集保累積資料補上 ${filled} 檔`);
     const { stocks, sectors } = flattenTw(scan);
     await upsert("tw", scan.sessionDate, stocks, TW_COLUMNS, ["session_date", "code"]);
     await upsert("tw_sectors", scan.sessionDate, sectors, TW_SECTOR_COLUMNS, ["session_date", "sector"]);

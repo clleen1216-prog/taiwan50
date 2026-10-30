@@ -66,7 +66,7 @@ export function parseMarginDay(json: {
     const indexes = (name: string) => fields.map((f, i) => (f === name ? i : -1)).filter((i) => i >= 0);
     const today = indexes("今日餘額");
     const prev = indexes("前日餘額");
-    const limit = indexes("限額");
+    const limit = fields.map((f, i) => (f.includes("限額") ? i : -1)).filter((i) => i >= 0);
     if (iCode < 0 || today.length < 2 || prev.length < 2 || !table.data?.length) continue;
     for (const row of table.data) {
       const code = row[iCode]?.trim();
@@ -150,4 +150,51 @@ export function liquidityAsOf(
     rrp: liquidityFrom(rrpUsable),
     net: netLiquidityFrom(upTo(walcl, weeklyCut), upTo(tga, weeklyCut), rrpUsable),
   };
+}
+
+// ---------- 千張大戶：集保結算所開放資料（只有最新一週，需要自己逐週累積）----------
+
+export interface TdccWeek {
+  date: string;
+  code: string;
+  bigPct: number;
+  bigPeople: number;
+  bigShares: number;
+}
+
+/**
+ * opendata.tdcc.com.tw/getOD.ashx?id=1-5：欄位為 資料日期、證券代號、持股分級、人數、股數、占集保庫存數比例%。
+ * 持股分級 15 = 1,000,001 股（1,000 張）以上。檔案可能有 BOM，欄位名稱因此要容忍。
+ */
+export function parseTdccCsv(
+  rows: Array<Record<string, string>>,
+  codes: Set<string>,
+): TdccWeek[] {
+  const out: TdccWeek[] = [];
+  for (const raw of rows) {
+    const row: Record<string, string> = {};
+    for (const [k, v] of Object.entries(raw)) row[k.replace(/^\uFEFF/, "").trim()] = v;
+    const level = (row["持股分級"] ?? "").trim();
+    const code = (row["證券代號"] ?? "").trim();
+    if (level !== "15" || !codes.has(code)) continue;
+    const d = (row["資料日期"] ?? "").trim();
+    if (!/^\d{8}$/.test(d)) continue;
+    const pct = Number((row["占集保庫存數比例%"] ?? row["占集保庫存數比例"] ?? "").replace(/,/g, ""));
+    if (!Number.isFinite(pct)) continue;
+    out.push({
+      date: `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`,
+      code,
+      bigPct: pct,
+      bigPeople: Number((row["人數"] ?? "").replace(/,/g, "")) || 0,
+      bigShares: Number((row["股數"] ?? "").replace(/,/g, "")) || 0,
+    });
+  }
+  return out;
+}
+
+export function holderFields(info: HolderInfo | null) {
+  if (!info) return null;
+  const side: "concentrating" | "distributing" | "neutral" =
+    info.streak >= 2 ? "concentrating" : info.streak <= -2 ? "distributing" : "neutral";
+  return { bigPct: info.pct, bigChange: info.change, bigStreak: info.streak, holderSide: side };
 }
