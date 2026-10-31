@@ -11,7 +11,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fetchBars, fetchT86, getJson, mapPool, toRow, type ChipRow, type MarginRaw } from "../src/lib/scan-core";
-import { cikOf, fetchFred, fetchText, secUa, toUsRow, type InsiderResult, type SlowData } from "../src/lib/us-scan-core";
+import { cikOf, fetchFred, secFetch, toUsRow, type InsiderResult, type SlowData } from "../src/lib/us-scan-core";
 import { BENCHMARK, UNIVERSE } from "../src/lib/universe";
 import { US_BENCHMARK, US_SECTOR_ETFS, US_UNIVERSE } from "../src/lib/us-universe";
 import { bigHolderSeries } from "../src/lib/holders";
@@ -362,13 +362,14 @@ async function backfillUs() {
   };
 
   const todo: Array<{ symbol: string; cik: string; acc: string; doc: string; filed: string }> = [];
+  const allForm4 = new Map<string, string[]>();
   for (const s of US_UNIVERSE) {
     if (s.foreignIssuer) continue;
     try {
       const cik = await cikOf(s.symbol);
       if (!cik) continue;
       const sub = JSON.parse(
-        await fetchText(`https://data.sec.gov/submissions/CIK${cik.padStart(10, "0")}.json`, { "User-Agent": secUa() }),
+        await secFetch(`https://data.sec.gov/submissions/CIK${cik.padStart(10, "0")}.json`),
       ) as { filings?: { recent?: { form?: string[]; filingDate?: string[]; accessionNumber?: string[]; primaryDocument?: string[]; items?: string[] } } };
       const recent = sub.filings?.recent;
       if (!recent?.form) continue;
@@ -380,10 +381,10 @@ async function backfillUs() {
         const acc = recent.accessionNumber?.[i];
         const doc = recent.primaryDocument?.[i];
         const date = recent.filingDate?.[i];
+        if (acc) allForm4.set(s.symbol, [...(allForm4.get(s.symbol) ?? []), acc]);
         if (acc && doc && date && !done.has(acc)) todo.push({ symbol: s.symbol, cik, acc, doc, filed: date });
       }
       console.log(`  ${s.symbol}：SEC 申報覆蓋自 ${filed[0]}，財報日 ${earningsBySymbol.get(s.symbol)?.length ?? 0} 筆`);
-      await sleep(150);
     } catch (error) {
       console.log(`  ${s.symbol} SEC 資料取得失敗：${error instanceof Error ? error.message : error}`);
     }
@@ -395,29 +396,37 @@ async function backfillUs() {
   if (earningsBySymbol.size === 0) problems.push("沒有取得任何財報日（8-K）");
   console.log(`待讀 Form 4：${todo.length} 份`);
   let processed = 0;
-  await mapPool(todo, 4, async (item) => {
+  let secFailed = 0;
+  await mapPool(todo, 3, async (item) => {
     if (Date.now() > deadline) return;
     try {
-      const xml = await fetchText(
+      const xml = await secFetch(
         `https://www.sec.gov/Archives/edgar/data/${item.cik}/${item.acc.replace(/-/g, "")}/${item.doc.replace(/^xslF345X\d+\//, "")}`,
-        { "User-Agent": secUa() },
       );
       for (const b of parseForm4Purchases(xml)) {
         buyRows.push({ symbol: item.symbol, filed: item.filed, owner: b.owner, title: b.title, officer: b.isOfficer ? "1" : "0", director: b.isDirector ? "1" : "0", txn_date: b.date, shares: str(b.shares), price: str(b.price) });
       }
       done.add(item.acc);
     } catch {
-      // 讀不到就留待下次
+      secFailed += 1; // 讀不到就留待下次（不寫入已處理清單）
     }
     processed += 1;
     if (processed % 100 === 0) {
       await flushSec();
       console.log(`  Form 4 已處理 ${processed}/${todo.length}`);
     }
-    await sleep(110);
   });
   await flushSec();
   if (todo.length > 0 && processed === 0) problems.push("Form 4 一份都沒讀到");
+  // 只要某檔還有 Form 4 沒成功讀到，它的內部人結論就不完整：設為「未知」，不能當作「沒有買進」
+  for (const [symbol, accessions] of allForm4) {
+    const missing = accessions.filter((a) => !done.has(a)).length;
+    if (missing > 0) {
+      coverageBySymbol.delete(symbol);
+      problems.push(`${symbol} 還有 ${missing}/${accessions.length} 份 Form 4 沒讀到，內部人欄位先標為未知（再執行一次會續做）`);
+    }
+  }
+  if (secFailed > 0) console.log(`Form 4 讀取失敗 ${secFailed} 份`);
   if (processed > 0) console.log(`Form 4 讀取完成：${processed} 份，買進紀錄累計 ${buyRows.length} 筆`);
   for (const r of buyRows) {
     const list = buysBySymbol.get(r.symbol!) ?? [];

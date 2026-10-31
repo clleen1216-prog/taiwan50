@@ -238,11 +238,30 @@ export type InsiderResult = { status: "ok"; summary: InsiderSummary } | { status
 
 let cikCache: { at: number; map: Map<string, string> } | null = null;
 
+// SEC 每秒最多約 10 次請求，超過會被暫時封鎖。所有 SEC 請求共用一個閘門（約每秒 7 次），
+// 遇到 429/403/503 會等待後重試，避免默默失敗。
+let secNextSlot = 0;
+export async function secFetch(url: string): Promise<string> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const now = Date.now();
+    const wait = Math.max(0, secNextSlot - now);
+    secNextSlot = Math.max(now, secNextSlot) + 140;
+    if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
+    try {
+      return await fetchText(url, { "User-Agent": secUa() });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/^(429|403|503)$/.test(message) || attempt === 2) throw error;
+      await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 15_000 : 45_000));
+      secNextSlot = Math.max(secNextSlot, Date.now());
+    }
+  }
+  throw new Error("unreachable");
+}
+
 export async function cikOf(symbol: string): Promise<string | null> {
   if (!cikCache || Date.now() - cikCache.at > 24 * 60 * 60 * 1000) {
-    const text = await fetchText("https://www.sec.gov/files/company_tickers.json", {
-      "User-Agent": secUa(),
-    });
+    const text = await secFetch("https://www.sec.gov/files/company_tickers.json");
     const json = JSON.parse(text) as Record<string, { cik_str: number; ticker: string }>;
     const map = new Map<string, string>();
     for (const item of Object.values(json)) map.set(item.ticker.toUpperCase(), String(item.cik_str));
@@ -256,9 +275,7 @@ async function fetchInsider(symbol: string, now: number): Promise<InsiderResult>
     const cik = await cikOf(symbol);
     if (!cik) return { status: "fail" };
     const sub = JSON.parse(
-      await fetchText(`https://data.sec.gov/submissions/CIK${cik.padStart(10, "0")}.json`, {
-        "User-Agent": secUa(),
-      }),
+      await secFetch(`https://data.sec.gov/submissions/CIK${cik.padStart(10, "0")}.json`),
     ) as {
       filings?: {
         recent?: {
@@ -284,10 +301,7 @@ async function fetchInsider(symbol: string, now: number): Promise<InsiderResult>
     await mapPool(picks, 4, async ({ acc, doc }) => {
       try {
         const file = doc.replace(/^xslF345X\d+\//, "");
-        const xml = await fetchText(
-          `https://www.sec.gov/Archives/edgar/data/${cik}/${acc.replace(/-/g, "")}/${file}`,
-          { "User-Agent": secUa() },
-        );
+        const xml = await secFetch(`https://www.sec.gov/Archives/edgar/data/${cik}/${acc.replace(/-/g, "")}/${file}`);
         buys.push(...parseForm4Purchases(xml));
       } catch {
         // 單份申報讀不到就略過
