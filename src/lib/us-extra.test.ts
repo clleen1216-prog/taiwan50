@@ -39,6 +39,11 @@ describe("Form 4", () => {
     }
   });
 
+  it("職稱裡的 HTML 跳脫字元會還原", () => {
+    const xml = FORM4("P", 5000, 100, "1", "EVP &amp; Chief Financial Officer");
+    assert.equal(parseForm4Purchases(xml)[0]!.title, "EVP & Chief Financial Officer");
+  });
+
   it("解析身分與金額，總額達門檻才算買進", () => {
     const buys = parseForm4Purchases(FORM4("P", 5000, 100));
     assert.equal(buys[0]!.owner, "DOE JANE");

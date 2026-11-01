@@ -28,6 +28,10 @@ function valueOf(block: string, name: string): string | null {
   return tag(inner, "value") ?? inner;
 }
 
+function decode(text: string) {
+  return text.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'");
+}
+
 function truthy(v: string | null) {
   return v === "1" || v?.toLowerCase() === "true";
 }
@@ -35,11 +39,11 @@ function truthy(v: string | null) {
 /** 解析一份 Form 4 XML，只回傳「公開市場買進 (code P)」的非衍生性交易。 */
 export function parseForm4Purchases(xml: string): InsiderBuy[] {
   const ownerBlock = tag(xml, "reportingOwner") ?? "";
-  const owner = tag(ownerBlock, "rptOwnerName") ?? "內部人";
+  const owner = decode(tag(ownerBlock, "rptOwnerName") ?? "內部人");
   const rel = tag(ownerBlock, "reportingOwnerRelationship") ?? "";
   const isOfficer = truthy(tag(rel, "isOfficer"));
   const isDirector = truthy(tag(rel, "isDirector"));
-  const title = tag(rel, "officerTitle") ?? (isDirector ? "Director" : "");
+  const title = decode(tag(rel, "officerTitle") ?? (isDirector ? "Director" : ""));
   const out: InsiderBuy[] = [];
   const re = /<nonDerivativeTransaction>([\s\S]*?)<\/nonDerivativeTransaction>/gi;
   let m: RegExpExecArray | null;

@@ -222,19 +222,37 @@ async function backfillTw() {
   }
   await flushMargin();
 
-  // ---- 千張大戶（FinMind，一檔一次請求，回溯到起點前 90 天）----
+  // ---- 千張大戶 ----
+  // 免費的集保資料只有最新一週，歷史要靠每日快照逐週累積（data/holders/tdcc.csv）；
+  // FinMind 的股權分散表歷史需要付費等級，只有設了 FINMIND_TOKEN 才嘗試，失敗不算錯誤。
   const holderSeries = new Map<string, Array<[string, number]>>();
+  let holderSource = "無";
+  for (const r of await loadRows(path.join(outDir, "holders", "tdcc.csv"))) {
+    const list = holderSeries.get(r.code!) ?? [];
+    list.push([r.date!, Number(r.big_pct)]);
+    holderSeries.set(r.code!, list);
+    holderSource = "每日快照累積的集保週報";
+  }
+  for (const list of holderSeries.values()) list.sort((a, b) => a[0].localeCompare(b[0]));
   const token = process.env.FINMIND_TOKEN?.trim();
-  await mapPool(UNIVERSE, 3, async (s) => {
-    try {
-      const url = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockHoldingSharesPer&data_id=${s.code}&start_date=${addDays(startDate, -90)}${token ? `&token=${token}` : ""}`;
-      const json = await getJson<{ status?: number; data?: Array<Record<string, string | number>> }>(url);
-      if (json.status === 200 && Array.isArray(json.data)) holderSeries.set(s.code, bigHolderSeries(json.data));
-    } catch {
-      console.log(`  ${s.code} 集保資料取得失敗`);
-    }
-  });
-  console.log(`集保大戶：${holderSeries.size}/${UNIVERSE.length} 檔`);
+  if (token) {
+    let failed = 0;
+    await mapPool(UNIVERSE, 3, async (s) => {
+      try {
+        const url = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockHoldingSharesPer&data_id=${s.code}&start_date=${addDays(startDate, -90)}&token=${token}`;
+        const json = await getJson<{ status?: number; data?: Array<Record<string, string | number>> }>(url);
+        const series = json.status === 200 && Array.isArray(json.data) ? bigHolderSeries(json.data) : [];
+        if (series.length > 0) {
+          holderSeries.set(s.code, series);
+          holderSource = "FinMind";
+        } else failed += 1;
+      } catch {
+        failed += 1;
+      }
+    });
+    if (failed > 0) console.log(`  FinMind 集保資料有 ${failed}/${UNIVERSE.length} 檔取不到（歷史版需付費等級）`);
+  }
+  console.log(`千張大戶：${holderSeries.size}/${UNIVERSE.length} 檔有資料（來源：${holderSource}）；週報需逐週累積，歷史列的 big_* 多半為空是預期的`);
 
   // ---- 組裝每個交易日 ----
   const t86ByDate = new Map<string, Map<string, ChipRow>>();
@@ -255,7 +273,6 @@ async function backfillTw() {
   }
   if (t86ByDate.size < dates.length * 0.5) problems.push(`三大法人只有 ${t86ByDate.size}/${dates.length} 天（被限流或尚未跑完，可再執行一次續跑）`);
   if (marginByDate.size < dates.length * 0.5) problems.push(`融資融券只有 ${marginByDate.size}/${dates.length} 天（被限流、尚未跑完，或欄位格式不同）`);
-  if (holderSeries.size < UNIVERSE.length * 0.8) problems.push(`集保大戶只有 ${holderSeries.size}/${UNIVERSE.length} 檔（FinMind 失敗或額度用完，可設 FINMIND_TOKEN）`);
   const idxByCode = new Map<string, Map<string, number>>();
   for (const [code, bars] of barsByCode) idxByCode.set(code, toMap(bars.map((b, i) => ({ d: dayOf(b), i: String(i) })), (r) => r.d!, (r) => Number(r.i)));
   const benchIdx = toMap(benchBars.map((b, i) => ({ d: dayOf(b), i: String(i) })), (r) => r.d!, (r) => Number(r.i));
