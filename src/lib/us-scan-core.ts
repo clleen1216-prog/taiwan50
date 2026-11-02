@@ -31,7 +31,6 @@ const SLOW_TTL_MS = 6 * 60 * 60 * 1000;
 const RETRY_MS = 10 * 60 * 1000;
 const SLOW_WAIT_MS = 15000;
 const CHART_BARS = 80;
-const INSIDER_BONUS = 20;
 const EARNINGS_PENALTY_SOP = 40;
 const EARNINGS_PENALTY_FLAGSHIP = 30;
 
@@ -434,19 +433,16 @@ export function toUsRow(
   const insiderKnown = insiderApplicable && insiderResult?.status === "ok";
   const summary = insiderResult?.status === "ok" ? insiderResult.summary : null;
   const insiderBought = summary?.hasBought ?? false;
-  const insiderBonus = base.inGate && base.sopKind === "breakout" && insiderBought;
+  const insiderBonus = false;
 
   let sop = base.sopScore;
   let flagship = base.flagshipScore;
   let sopLabel = base.sopLabel;
   const notes = [...base.notes];
 
-  if (insiderBonus) {
-    if (sop != null) sop += INSIDER_BONUS;
-    flagship += INSIDER_BONUS;
-    notes.unshift(`${summary!.note}，糾結突破又有內部人買進（+${INSIDER_BONUS}）`);
-  } else if (insiderBought) {
-    notes.unshift(`${summary!.note}，但還沒糾結突破，不加分`);
+  // 驗證（2023–2026，60 檔、4.5 萬筆）顯示內部人買進沒有預測力，改為僅顯示、不加分。
+  if (insiderBought) {
+    notes.unshift(`${summary!.note}（驗證後僅供參考，不加分）`);
   }
 
   if (earningsNear) {

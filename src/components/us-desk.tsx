@@ -258,11 +258,6 @@ export function UsDesk({ initial }: { initial: UsScanResult }) {
                     <span className={cn("mt-3 inline-flex h-6 items-center rounded-md px-2 text-xs", kindTone(row))}>
                       {row.sopLabel}
                     </span>
-                    {row.insiderBonus ? (
-                      <span className="ml-2 inline-flex h-6 items-center rounded-md bg-gold/15 px-2 text-xs text-gold">
-                        內部人 +20
-                      </span>
-                    ) : null}
                   </button>
                 </li>
               ))}
@@ -276,7 +271,7 @@ export function UsDesk({ initial }: { initial: UsScanResult }) {
                 <div>
                   <h3 className="font-medium text-fg">評分</h3>
                   <p className="mt-2 text-pretty">
-                    跟台股共用同一套核心：四條均線價差小於 5% 才入閘，基礎 70，小於 2.5% 加 10，爆量扎實突破加 20、假突破扣 30、量縮加 5。財報週（0 到 3 天內）SOP 扣 40、旗艦扣 30。糾結突破又有內部人公開市場買進，兩套分數各加 20。
+                    跟台股共用同一套核心：四條均線價差小於 5% 才入閘，基礎 70，小於 2.5% 加 10，爆量扎實突破加 20、假突破扣 30、量縮加 5。財報週（0 到 3 天內）SOP 扣 40、旗艦扣 30。內部人公開市場買進只顯示、不加分：3 年 4.5 萬筆驗證沒有預測力。
                   </p>
                 </div>
                 <div>
