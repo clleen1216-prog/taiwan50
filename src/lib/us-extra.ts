@@ -216,6 +216,8 @@ export interface OptionQuote {
   ask?: number;
   lastPrice?: number;
   impliedVolatility?: number;
+  volume?: number;
+  openInterest?: number;
 }
 
 export interface ExpectedMove {

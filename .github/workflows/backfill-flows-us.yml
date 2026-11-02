@@ -1,0 +1,53 @@
+name: backfill-flows-us
+# 手動觸發：回填 FINRA 空單量（3 年）或 13F 機構持股（季度）。選 finra 或 13f。
+on:
+  schedule:
+    - cron: "0 5 20 2,5,8,11 *"  # 每季申報期限後，自動更新 13F
+  workflow_dispatch:
+    inputs:
+      what:
+        description: "要回填哪一種"
+        type: choice
+        options: [finra, 13f]
+        default: finra
+
+permissions:
+  contents: write
+
+concurrency:
+  group: snapshot-data
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: code
+      - uses: actions/checkout@v4
+        with:
+          ref: data
+          path: out
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run
+        working-directory: code
+        env:
+          SEC_USER_AGENT: ${{ vars.SEC_USER_AGENT }}
+          YEARS: "3"
+          OUT_DIR: ${{ github.workspace }}/out/data
+        run: npx -y tsx@4.19.2 --tsconfig tsconfig.json scripts/flows-us.ts ${{ inputs.what || '13f' }}
+      - name: Commit data
+        if: always()
+        working-directory: out
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && echo "no changes" && exit 0
+          git commit -m "backfill-flows-us $(date -u +%F)"
+          git pull --rebase origin data
+          git push origin HEAD:data

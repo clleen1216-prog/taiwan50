@@ -186,13 +186,13 @@ async function fetchEarningsMs(symbol: string, now: number): Promise<number | nu
 
 // ---------- 財報週預期波動 (Yahoo 選擇權鏈) ----------
 
-interface ChainResult {
+export interface ChainResult {
   expirationDates?: number[];
-  quote?: { regularMarketPrice?: number };
+  quote?: { regularMarketPrice?: number; regularMarketTime?: number };
   options?: Array<{ calls?: OptionQuote[]; puts?: OptionQuote[] }>;
 }
 
-async function fetchChain(symbol: string, dateSec?: number): Promise<ChainResult | null> {
+export async function fetchChain(symbol: string, dateSec?: number): Promise<ChainResult | null> {
   const { crumb, cookie } = await yahooSession();
   const text = await fetchText(
     `https://query2.finance.yahoo.com/v7/finance/options/${symbol}?crumb=${encodeURIComponent(crumb)}${dateSec ? `&date=${dateSec}` : ""}`,

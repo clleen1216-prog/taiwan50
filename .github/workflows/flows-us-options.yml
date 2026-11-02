@@ -1,0 +1,47 @@
+name: flows-us-options
+# 美股選擇權 Put/Call 每日快照（週一到週五美股收盤後）。免費來源沒有歷史，只能往前累積。
+on:
+  schedule:
+    - cron: "30 22 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: snapshot-data
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: code
+      - uses: actions/checkout@v4
+        with:
+          ref: data
+          path: out
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run
+        working-directory: code
+        env:
+          SEC_USER_AGENT: ${{ vars.SEC_USER_AGENT }}
+          YEARS: "3"
+          OUT_DIR: ${{ github.workspace }}/out/data
+        run: npx -y tsx@4.19.2 --tsconfig tsconfig.json scripts/flows-us.ts options
+      - name: Commit data
+        if: always()
+        working-directory: out
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && echo "no changes" && exit 0
+          git commit -m "flows-us-options $(date -u +%F)"
+          git pull --rebase origin data
+          git push origin HEAD:data
