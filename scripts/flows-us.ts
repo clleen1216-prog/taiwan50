@@ -39,6 +39,11 @@ const mode = process.argv[2];
 const outDir = path.resolve(process.env.OUT_DIR ?? "data");
 const root = path.join(outDir, "us_flows");
 const problems: string[] = [];
+const logLines: string[] = [];
+const note = (line: string) => {
+  console.log(line);
+  logLines.push(line);
+};
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function readRows(file: string) {
@@ -208,7 +213,7 @@ const NAME_RULES: NameRule[] = [
   ["AVGO", /^BROADCOM/], ["QCOM", /^QUALCOMM/], ["TXN", /^TEXAS INSTR/], ["AMAT", /^APPLIED MATLS|^APPLIED MATERIALS/],
   ["LRCX", /^LAM RESEARCH/], ["KLAC", /^KLA CORP/], ["ADI", /^ANALOG DEVICES/], ["META", /^META PLATFORMS/],
   ["TSLA", /^TESLA/], ["NFLX", /^NETFLIX/], ["CRM", /^SALESFORCE/], ["ADBE", /^ADOBE/], ["NOW", /^SERVICENOW/],
-  ["INTU", /^INTUIT INC/], ["CSCO", /^CISCO/], ["IBM", /^INTERNATIONAL BUSINESS MACH/], ["DELL", /^DELL TECH/],
+  ["INTU", /^INTUIT(?!IVE)/], ["CSCO", /^CISCO/], ["IBM", /^INTERNATIONAL BUSINESS MACH/], ["DELL", /^DELL TECH/],
   ["JPM", /^JPMORGAN/], ["BAC", /^BANK AMER/], ["GS", /^GOLDMAN SACHS GROUP/], ["V", /^VISA INC/],
   ["MA", /^MASTERCARD/], ["PYPL", /^PAYPAL/], ["BRK-B", /^BERKSHIRE HATHAWAY/, /CL B|CLASS B/],
   ["UNH", /^UNITEDHEALTH/], ["JNJ", /^JOHNSON & JOHNSON|^JOHNSON AND JOHNSON/], ["LLY", /^LILLY/], ["PFE", /^PFIZER/],
@@ -229,7 +234,7 @@ function zipCandidates(): string[] {
     "2023q4_form13f.zip",
     "01jan2024-29feb2024_form13f.zip", "01mar2024-31may2024_form13f.zip", "01jun2024-31aug2024_form13f.zip",
     "01sep2024-30nov2024_form13f.zip", "01dec2024-28feb2025_form13f.zip", "01mar2025-31may2025_form13f.zip",
-    "01jun2025-31aug2025_form13f.zip", "01sep2025-30nov2025_form13f.zip", "01dec2025-28feb2026_form13f.zip",
+    "01jun2025-31aug2025_form13f.zip", "01jun2025-30aug2025_form13f.zip", "01jun2025-31jul2025_form13f.zip", "01jul2025-31aug2025_form13f.zip", "01sep2025-30nov2025_form13f.zip", "01dec2025-28feb2026_form13f.zip",
     "01mar2026-31may2026_form13f.zip", "01jun2026-31aug2026_form13f.zip", "01sep2026-30nov2026_form13f.zip",
   ];
   return names.flatMap((n) => dirs.map((d) => `${d}/${n}`));
@@ -278,7 +283,7 @@ async function discoverZipUrls(): Promise<string[]> {
       /* 找不到頁面就用內建清單 */
     }
   }
-  console.log(`13F：從 SEC 頁面找到 ${found.size} 個壓縮檔連結`);
+  note(`13F：從 SEC 頁面找到 ${found.size} 個壓縮檔連結：${[...found].map((u) => u.split("/").pop()).join(", ")}`);
   return [...found];
 }
 
@@ -301,6 +306,7 @@ async function inst13f() {
 
   // 先全部掃一遍，收集「名稱符合的 CUSIP 市值」；第二遍再用選定的 CUSIP 彙總
   const zips: string[] = [];
+  const notFound = new Set<string>();
   const seenName = new Set<string>();
   for (const url of [...(await discoverZipUrls()), ...zipCandidates()]) {
     const name = url.split("/").pop()!;
@@ -310,13 +316,16 @@ async function inst13f() {
       if (await download(url, file)) {
         seenName.add(name);
         zips.push(file);
-        console.log(`13F：下載 ${name}`);
+        note(`13F：下載 ${name}`);
+      } else if (!zips.some((z) => path.basename(z) === name)) {
+        notFound.add(name);
       }
     } catch (error) {
       problems.push(`13F 下載失敗 ${name}：${error instanceof Error ? error.message : error}`);
       seenName.add(name);
     }
   }
+  for (const name of notFound) if (!seenName.has(name)) note(`13F：兩個路徑都找不到 ${name}`);
   if (zips.length === 0) {
     problems.push("13F：一個壓縮檔都沒下載到（網址可能變了）");
     return;
@@ -363,7 +372,7 @@ async function inst13f() {
       cusipValue.set(key, (cusipValue.get(key) ?? 0) + value);
       holdingsRaw.push({ filing, symbol, cusip, shares, value });
     }
-    console.log(`13F：${path.basename(zip)} 申報 ${local.size} 份，符合名稱的持股 ${matched} 筆`);
+    note(`13F：${path.basename(zip)} 申報 ${local.size} 份，符合名稱的持股 ${matched} 筆`);
   }
 
   const { chosen, alternates } = pickCusips(cusipValue);
@@ -395,7 +404,8 @@ async function inst13f() {
     path.join(root, "inst13f.csv"),
     toCsv(complete as unknown as Record_[], ["quarter_end", "usable_from", "symbol", "cusip", "shares", "value_usd", "holders", "filings"]),
   );
-  console.log(`13F：輸出 ${complete.length} 列，涵蓋 ${new Set(complete.map((q) => q.quarter_end)).size} 季、${new Set(complete.map((q) => q.symbol)).size} 檔`);
+  note(`13F：輸出 ${complete.length} 列，涵蓋 ${new Set(complete.map((q) => q.quarter_end)).size} 季、${new Set(complete.map((q) => q.symbol)).size} 檔`);
+  await writeFile(path.join(root, "inst13f_log.txt"), logLines.join("\n") + "\n" + (problems.length ? "問題：\n" + problems.join("\n") + "\n" : ""));
   await run("rm", ["-rf", tmp]);
 }
 
