@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   addOptionTotals,
   changePct,
+  dominantCusips,
   EMPTY_OPTIONS,
   filedInTime,
   holdingsUsableFrom,
@@ -62,9 +63,9 @@ describe("13F", () => {
     assert.equal(normalizeSecDate("31-DEC-2025"), "2025-12-31");
     assert.equal(normalizeSecDate("2025-12-31"), "2025-12-31");
     assert.equal(normalizeSecDate("garbage"), null);
-    assert.equal(holdingsUsableFrom("2025-12-31"), "2026-02-15");
-    assert.equal(filedInTime({ accession: "a", filedOn: "2026-02-14", type: "13F-HR", quarterEnd: "2025-12-31" }), true);
-    assert.equal(filedInTime({ accession: "a", filedOn: "2026-02-15", type: "13F-HR", quarterEnd: "2025-12-31" }), false);
+    assert.equal(holdingsUsableFrom("2025-12-31"), "2026-02-18");
+    assert.equal(filedInTime({ accession: "a", filedOn: "2026-02-17", type: "13F-HR", quarterEnd: "2025-12-31" }), true);
+    assert.equal(filedInTime({ accession: "a", filedOn: "2026-02-19", type: "13F-HR", quarterEnd: "2025-12-31" }), false);
     assert.equal(filedInTime({ accession: "a", filedOn: "2026-01-10", type: "13F-HR/A", quarterEnd: "2025-12-31" }), false);
   });
   it("依名稱規則歸戶並挑出市值最大的 CUSIP", () => {
@@ -78,14 +79,21 @@ describe("13F", () => {
   });
   it("只用已公開的季度，並計算季變化", () => {
     const rows = [
-      { quarter_end: "2025-09-30", usable_from: "2025-11-15", shares: 100 },
-      { quarter_end: "2025-12-31", usable_from: "2026-02-15", shares: 120 },
+      { quarter_end: "2025-09-30", usable_from: "2025-11-18", shares: 100 },
+      { quarter_end: "2025-12-31", usable_from: "2026-02-18", shares: 120 },
     ];
-    assert.equal(latestQuarterAsOf(rows, "2025-11-14"), null);
+    assert.equal(latestQuarterAsOf(rows, "2025-11-17"), null);
     assert.equal(latestQuarterAsOf(rows, "2026-01-20")!.cur.shares, 100);
     const got = latestQuarterAsOf(rows, "2026-03-01")!;
     assert.equal(got.cur.shares, 120);
     assert.equal(changePct(got.cur.shares, got.prev!.shares), 20);
     assert.equal(changePct(5, 0), null);
+  });
+
+  it("同季多個 CUSIP 取市值最大者", () => {
+    const mk = (v: number) => ({ shares: 1, valueUsd: v, holders: new Set(["a"]) });
+    const best = dominantCusips(new Map([["2024-09-30|LRCX|OLD", mk(5)], ["2024-09-30|LRCX|NEW", mk(9)], ["2024-12-31|LRCX|OLD", mk(1)]]));
+    assert.equal(best.get("2024-09-30|LRCX")!.cusip, "NEW");
+    assert.equal(best.get("2024-12-31|LRCX")!.cusip, "OLD");
   });
 });

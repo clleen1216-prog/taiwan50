@@ -20,6 +20,7 @@ import {
   addOptionTotals,
   filedInTime,
   finraSymbol,
+  dominantCusips,
   holdingsUsableFrom,
   matchRule,
   normalizeSecDate,
@@ -207,7 +208,7 @@ const NAME_RULES: NameRule[] = [
   ["AVGO", /^BROADCOM/], ["QCOM", /^QUALCOMM/], ["TXN", /^TEXAS INSTR/], ["AMAT", /^APPLIED MATLS|^APPLIED MATERIALS/],
   ["LRCX", /^LAM RESEARCH/], ["KLAC", /^KLA CORP/], ["ADI", /^ANALOG DEVICES/], ["META", /^META PLATFORMS/],
   ["TSLA", /^TESLA/], ["NFLX", /^NETFLIX/], ["CRM", /^SALESFORCE/], ["ADBE", /^ADOBE/], ["NOW", /^SERVICENOW/],
-  ["INTU", /^INTUIT/], ["CSCO", /^CISCO/], ["IBM", /^INTERNATIONAL BUSINESS MACH/], ["DELL", /^DELL TECH/],
+  ["INTU", /^INTUIT INC/], ["CSCO", /^CISCO/], ["IBM", /^INTERNATIONAL BUSINESS MACH/], ["DELL", /^DELL TECH/],
   ["JPM", /^JPMORGAN/], ["BAC", /^BANK AMER/], ["GS", /^GOLDMAN SACHS GROUP/], ["V", /^VISA INC/],
   ["MA", /^MASTERCARD/], ["PYPL", /^PAYPAL/], ["BRK-B", /^BERKSHIRE HATHAWAY/, /CL B|CLASS B/],
   ["UNH", /^UNITEDHEALTH/], ["JNJ", /^JOHNSON & JOHNSON|^JOHNSON AND JOHNSON/], ["LLY", /^LILLY/], ["PFE", /^PFIZER/],
@@ -225,7 +226,7 @@ function zipCandidates(): string[] {
     "https://www.sec.gov/files/datastandardsinnovation/data/form-13f-data-sets",
   ];
   const names = [
-    "2023q3_form13f.zip", "2023q4_form13f.zip",
+    "2023q4_form13f.zip",
     "01jan2024-29feb2024_form13f.zip", "01mar2024-31may2024_form13f.zip", "01jun2024-31aug2024_form13f.zip",
     "01sep2024-30nov2024_form13f.zip", "01dec2024-28feb2025_form13f.zip", "01mar2025-31may2025_form13f.zip",
     "01jun2025-31aug2025_form13f.zip", "01sep2025-30nov2025_form13f.zip", "01dec2025-28feb2026_form13f.zip",
@@ -259,6 +260,28 @@ async function* tsvRows(zip: string, member: string): AsyncGenerator<Record<stri
   }
 }
 
+async function discoverZipUrls(): Promise<string[]> {
+  const pages = [
+    "https://www.sec.gov/dera/data/form-13f",
+    "https://www.sec.gov/data-research/sec-markets-data/form-13f-data-sets",
+  ];
+  const found = new Set<string>();
+  for (const page of pages) {
+    try {
+      const res = await fetch(page, { headers: { "User-Agent": secUa() }, redirect: "follow" });
+      if (!res.ok) continue;
+      const html = await res.text();
+      for (const m of html.matchAll(/href="([^"]*_form13f\.zip)"/gi)) {
+        found.add(new URL(m[1]!, "https://www.sec.gov").toString());
+      }
+    } catch {
+      /* 找不到頁面就用內建清單 */
+    }
+  }
+  console.log(`13F：從 SEC 頁面找到 ${found.size} 個壓縮檔連結`);
+  return [...found];
+}
+
 async function download(url: string, file: string): Promise<boolean> {
   const res = await fetch(url, { headers: { "User-Agent": secUa() } });
   if (res.status === 404) return false;
@@ -273,12 +296,13 @@ async function download(url: string, file: string): Promise<boolean> {
 async function inst13f() {
   const tmp = path.join(root, "_tmp13f");
   await mkdir(tmp, { recursive: true });
-  const minQuarter = addDays(new Date().toISOString().slice(0, 10), -Math.round(Number(process.env.YEARS ?? "3") * 365 + 200));
+  // 2023-06 以前的季度股數與市值對不上（單位疑似不一致），從 2023-09 起算
+  const minQuarter = "2023-09-01";
 
   // 先全部掃一遍，收集「名稱符合的 CUSIP 市值」；第二遍再用選定的 CUSIP 彙總
   const zips: string[] = [];
   const seenName = new Set<string>();
-  for (const url of zipCandidates()) {
+  for (const url of [...(await discoverZipUrls()), ...zipCandidates()]) {
     const name = url.split("/").pop()!;
     if (seenName.has(name)) continue;
     const file = path.join(tmp, name);
@@ -299,6 +323,7 @@ async function inst13f() {
   }
 
   const filings = new Map<string, Filing>();
+  const seenAccession = new Set<string>();
   const cusipValue = new Map<string, number>();
   const holdingsRaw: Array<{ filing: Filing; symbol: string; cusip: string; shares: number; value: number }> = [];
 
@@ -314,7 +339,10 @@ async function inst13f() {
       const q = normalizeSecDate(r.REPORTCALENDARORQUARTER ?? "");
       if (!sub || !q || q < minQuarter) continue;
       const filing: Filing = { accession: r.ACCESSION_NUMBER!, filedOn: sub.filedOn, type: sub.type, quarterEnd: q };
-      if (filedInTime(filing)) local.set(filing.accession, filing);
+      if (filedInTime(filing) && !seenAccession.has(filing.accession)) {
+        local.set(filing.accession, filing);
+        seenAccession.add(filing.accession);
+      }
     }
     let matched = 0;
     for await (const r of tsvRows(zip, "INFOTABLE.tsv")) {
@@ -346,19 +374,18 @@ async function inst13f() {
     toCsv([...chosen].map(([symbol, cusip]) => ({ symbol, cusip, others: (alternates.get(symbol) ?? []).join(" ") })), ["symbol", "cusip", "others"]),
   );
 
-  const agg = new Map<string, { shares: number; value: number; holders: Set<string> }>();
+  const agg = new Map<string, { shares: number; valueUsd: number; holders: Set<string> }>();
   for (const h of holdingsRaw) {
-    if (chosen.get(h.symbol) !== h.cusip) continue;
-    const key = `${h.filing.quarterEnd}|${h.symbol}`;
-    const a = agg.get(key) ?? { shares: 0, value: 0, holders: new Set<string>() };
+    const key = `${h.filing.quarterEnd}|${h.symbol}|${h.cusip}`;
+    const a = agg.get(key) ?? { shares: 0, valueUsd: 0, holders: new Set<string>() };
     a.shares += h.shares;
-    a.value += h.value;
+    a.valueUsd += h.value;
     a.holders.add(h.filing.accession);
     agg.set(key, a);
   }
-  const quarters: QuarterRow[] = [...agg].map(([key, a]) => {
+  const quarters: QuarterRow[] = [...dominantCusips(agg)].map(([key, a]) => {
     const [quarter_end, symbol] = key.split("|") as [string, string];
-    return { quarter_end, usable_from: holdingsUsableFrom(quarter_end), symbol, cusip: chosen.get(symbol)!, shares: a.shares, value_usd: Math.round(a.value), holders: a.holders.size, filings: a.holders.size };
+    return { quarter_end, usable_from: holdingsUsableFrom(quarter_end), symbol, cusip: a.cusip, shares: a.shares, value_usd: Math.round(a.valueUsd), holders: a.holders.size, filings: a.holders.size };
   }).sort((a, b) => a.quarter_end.localeCompare(b.quarter_end) || a.symbol.localeCompare(b.symbol));
 
   // 申報期限還沒過的季度資料不完整，不輸出

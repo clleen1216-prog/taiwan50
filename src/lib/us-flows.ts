@@ -129,13 +129,15 @@ export function addDaysIso(date: string, days: number) {
   return new Date(Date.parse(`${date}T00:00:00Z`) + days * 86400_000).toISOString().slice(0, 10);
 }
 
-/** 13F 法定期限是季末後 45 天；我們只用期限內送出的申報，並從期限隔天起才算「已知」 */
+/** 13F 法定期限是季末後 45 天，遇週末或假日順延（例如 2026-02-14 是週六又遇總統日，實際到 2/17）。
+ *  所以收 48 天內送出的申報，從第 49 天起才算「已知」。 */
+export const FILING_GRACE_DAYS = 48;
 export function holdingsUsableFrom(quarterEnd: string) {
-  return addDaysIso(quarterEnd, 46);
+  return addDaysIso(quarterEnd, FILING_GRACE_DAYS + 1);
 }
 
 export function filedInTime(f: Filing) {
-  return f.type === "13F-HR" && f.filedOn <= addDaysIso(f.quarterEnd, 45);
+  return f.type === "13F-HR" && f.filedOn <= addDaysIso(f.quarterEnd, FILING_GRACE_DAYS);
 }
 
 export function matchRule(rules: NameRule[], name: string, title: string): string | null {
@@ -225,4 +227,22 @@ export function shortFeaturesAt(series: Array<{ shortVol: number; totalVol: numb
     shortRatio5d: last5.length === 5 ? Math.round(five * 1000) / 1000 : null,
     shortZ60: z,
   };
+}
+
+export interface CusipAgg {
+  shares: number;
+  valueUsd: number;
+  holders: Set<string>;
+}
+
+/** 同一檔同一季若有多個 CUSIP（換股票代碼、分割後換 CUSIP、填錯），取該季市值最大的那個 */
+export function dominantCusips(agg: Map<string, CusipAgg>): Map<string, { cusip: string } & CusipAgg> {
+  const best = new Map<string, { cusip: string } & CusipAgg>();
+  for (const [key, a] of agg) {
+    const [quarter, symbol, cusip] = key.split("|") as [string, string, string];
+    const k = `${quarter}|${symbol}`;
+    const cur = best.get(k);
+    if (!cur || a.valueUsd > cur.valueUsd) best.set(k, { cusip, ...a });
+  }
+  return best;
 }
