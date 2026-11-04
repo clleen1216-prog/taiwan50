@@ -248,7 +248,25 @@ function run(cmd: string, args: string[]): Promise<void> {
   });
 }
 
-async function* tsvRows(zip: string, member: string): AsyncGenerator<Record<string, string>> {
+async function listMembers(zip: string): Promise<string[]> {
+  return new Promise((resolve) => {
+    const p = spawn("unzip", ["-Z1", zip], { stdio: ["ignore", "pipe", "inherit"] });
+    let out = "";
+    p.stdout.on("data", (d) => (out += d));
+    p.on("close", () => resolve(out.split("\n").filter(Boolean)));
+    p.on("error", () => resolve([]));
+  });
+}
+
+/** 壓縮檔裡的檔名大小寫或資料夾可能不同，用不分大小寫、忽略路徑的方式找 */
+async function resolveMember(zip: string, member: string): Promise<string> {
+  const names = await listMembers(zip);
+  const want = member.toUpperCase();
+  return names.find((n) => n.split("/").pop()!.toUpperCase() === want) ?? member;
+}
+
+async function* tsvRows(zip: string, memberName: string): AsyncGenerator<Record<string, string>> {
+  const member = await resolveMember(zip, memberName);
   const p = spawn("unzip", ["-p", zip, member], { stdio: ["ignore", "pipe", "inherit"] });
   const rl = createInterface({ input: p.stdout, crlfDelay: Infinity });
   let head: string[] | null = null;
@@ -363,6 +381,7 @@ async function inst13f() {
         for await (const r of tsvRows(zip, member)) return JSON.stringify(r).slice(0, 400);
         return "(空)";
       };
+      note(`13F 診斷 壓縮檔內容：${(await listMembers(zip)).slice(0, 15).join(", ")}`);
       note(`13F 診斷 ${path.basename(zip)}：SUBMISSION ${subs.size} 筆；第一列 ${await peek("SUBMISSION.tsv").catch((e) => String(e))}`);
       note(`13F 診斷 COVERPAGE 第一列 ${await peek("COVERPAGE.tsv").catch((e) => String(e))}`);
     }
