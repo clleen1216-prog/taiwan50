@@ -11,48 +11,6 @@
 13F：下載 01mar2024-31may2024_form13f.zip
 13F：下載 01jan2024-29feb2024_form13f.zip
 13F：下載 2023q4_form13f.zip
-13F：下載 2023q3_form13f.zip
-13F：下載 2023q2_form13f.zip
-13F：下載 2023q1_form13f.zip
-13F：下載 2022q4_form13f.zip
-13F：下載 2022q3_form13f.zip
-13F：下載 2022q2_form13f.zip
-13F：下載 2022q1_form13f.zip
-13F：下載 2021q4_form13f.zip
-13F：下載 2021q3_form13f.zip
-13F：下載 2021q2_form13f.zip
-13F：下載 2021q1_form13f.zip
-13F：下載 2020q4_form13f.zip
-13F：下載 2020q3_form13f.zip
-13F：下載 2020q2_form13f.zip
-13F：下載 2020q1_form13f.zip
-13F：下載 2019q4_form13f.zip
-13F：下載 2019q3_form13f.zip
-13F：下載 2019q2_form13f.zip
-13F：下載 2019q1_form13f.zip
-13F：下載 2018q4_form13f.zip
-13F：下載 2018q3_form13f.zip
-13F：下載 2018q2_form13f.zip
-13F：下載 2018q1_form13f.zip
-13F：下載 2017q4_form13f.zip
-13F：下載 2017q3_form13f.zip
-13F：下載 2017q2_form13f.zip
-13F：下載 2017q1_form13f.zip
-13F：下載 2016q4_form13f.zip
-13F：下載 2016q3_form13f.zip
-13F：下載 2016q2_form13f.zip
-13F：下載 2016q1_form13f.zip
-13F：下載 2015q4_form13f.zip
-13F：下載 2015q3_form13f.zip
-13F：下載 2015q2_form13f.zip
-13F：下載 2015q1_form13f.zip
-13F：下載 2014q4_form13f.zip
-13F：下載 2014q3_form13f.zip
-13F：下載 2014q2_form13f.zip
-13F：下載 2014q1_form13f.zip
-13F：下載 2013q4_form13f.zip
-13F：下載 2013q3_form13f.zip
-13F：下載 2013q2_form13f.zip
 13F：兩個路徑都找不到 01jun2025-30aug2025_form13f.zip
 13F：兩個路徑都找不到 01jun2025-31jul2025_form13f.zip
 13F：兩個路徑都找不到 01jul2025-31aug2025_form13f.zip
@@ -61,6 +19,8 @@
 13F：01mar2026-31may2026_form13f.zip 申報 8650 份，符合名稱的持股 266601 筆
 13F：01dec2025-28feb2026_form13f.zip 申報 8382 份，符合名稱的持股 263625 筆
 13F：01sep2025-30nov2025_form13f.zip 申報 7908 份，符合名稱的持股 250003 筆
+13F 診斷 01jun2025-31aug2025_form13f.zip：SUBMISSION 0 筆；第一列 (空)
+13F 診斷 COVERPAGE 第一列 (空)
 13F：01jun2025-31aug2025_form13f.zip 申報 0 份，符合名稱的持股 0 筆
 13F：01mar2025-31may2025_form13f.zip 申報 7905 份，符合名稱的持股 265088 筆
 13F：01dec2024-28feb2025_form13f.zip 申報 7733 份，符合名稱的持股 246995 筆
@@ -69,46 +29,4 @@
 13F：01mar2024-31may2024_form13f.zip 申報 7170 份，符合名稱的持股 221482 筆
 13F：01jan2024-29feb2024_form13f.zip 申報 7113 份，符合名稱的持股 219103 筆
 13F：2023q4_form13f.zip 申報 6863 份，符合名稱的持股 216151 筆
-13F：2023q3_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2023q2_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2023q1_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2022q4_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2022q3_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2022q2_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2022q1_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2021q4_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2021q3_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2021q2_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2021q1_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2020q4_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2020q3_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2020q2_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2020q1_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2019q4_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2019q3_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2019q2_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2019q1_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2018q4_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2018q3_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2018q2_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2018q1_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2017q4_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2017q3_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2017q2_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2017q1_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2016q4_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2016q3_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2016q2_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2016q1_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2015q4_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2015q3_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2015q2_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2015q1_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2014q4_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2014q3_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2014q2_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2014q1_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2013q4_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2013q3_form13f.zip 申報 0 份，符合名稱的持股 0 筆
-13F：2013q2_form13f.zip 申報 0 份，符合名稱的持股 0 筆
 13F：輸出 660 列，涵蓋 11 季、60 檔
