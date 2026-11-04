@@ -284,7 +284,12 @@ async function discoverZipUrls(): Promise<string[]> {
     }
   }
   note(`13F：從 SEC 頁面找到 ${found.size} 個壓縮檔連結：${[...found].map((u) => u.split("/").pop()).join(", ")}`);
-  return [...found];
+  // 只要 2023q4 以後的檔案（更早的用不到，下載很浪費時間）
+  return [...found].filter((u) => {
+    const name = u.split("/").pop()!;
+    const year = Number((/(20\d{2})(?!.*20\d{2})/.exec(name.replace(/_form13f\.zip$/, "")) ?? [])[1]);
+    return year > 2023 || name.startsWith("2023q4");
+  });
 }
 
 async function download(url: string, file: string): Promise<boolean> {
@@ -352,6 +357,14 @@ async function inst13f() {
         local.set(filing.accession, filing);
         seenAccession.add(filing.accession);
       }
+    }
+    if (local.size === 0) {
+      const peek = async (member: string) => {
+        for await (const r of tsvRows(zip, member)) return JSON.stringify(r).slice(0, 400);
+        return "(空)";
+      };
+      note(`13F 診斷 ${path.basename(zip)}：SUBMISSION ${subs.size} 筆；第一列 ${await peek("SUBMISSION.tsv").catch((e) => String(e))}`);
+      note(`13F 診斷 COVERPAGE 第一列 ${await peek("COVERPAGE.tsv").catch((e) => String(e))}`);
     }
     let matched = 0;
     for await (const r of tsvRows(zip, "INFOTABLE.tsv")) {
